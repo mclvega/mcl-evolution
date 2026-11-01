@@ -1,9 +1,9 @@
 # McL Evolution
 
-Juego de supervivencia y evolución en 3D para el navegador. Empiezas como un gusano diminuto: comes, cazas, llenas la barra de ADN, vences al Alfa de la región y evolucionas a la forma siguiente. La evolución no tiene final: las formas y los biomas se repiten en ciclo y cada vuelta es más difícil.
+Juego de supervivencia y evolución en 3D para el navegador, en un **mundo abierto infinito**. Empiezas como un gusano diminuto: comes, cazas, llenas la barra de ADN, vences al Alfa y evolucionas ahí mismo a la forma siguiente. El mundo no tiene bordes: los biomas cambian según caminas y cuanto más lejos del origen vas, más fuerte es la fauna y más ADN da. Si mueres, tu linaje se extingue y empiezas de nuevo como gusano en otro mundo.
 
 - **Diez formas**: gusano, escarabajo, rana, lagarto, zorro, felino, oso, dinosaurio, mamut y dragón. Después vuelven a empezar como «Forma +N», con más púas.
-- **Siete biomas en ciclo**: charca, bosque, pradera, sabana, tundra, volcán y pantano.
+- **Siete biomas** repartidos por el mundo en zonas grandes: charca (donde empiezas), bosque, pradera, sabana, tundra, volcán y pantano.
 - **Fauna**: las presas huyen, los rivales se defienden si los atacas y los depredadores te cazan. Al cazar queda carne con ADN.
 - **El Alfa**: aparece con la barra de ADN llena. Avisa antes de morder, embiste, da pisotones en área y se enfurece a media vida.
 - **Mutaciones**: eliges 1 de 3 al evolucionar, como caparazón, regeneración, garras, patas largas, digestión, olfato, pulmones, colmillos venenosos, rugido, escupitajo o embestida.
@@ -22,4 +22,4 @@ npm test
 npm run build
 ```
 
-En `src/core/*` está la lógica pura: formas, especies, biomas, región, mutaciones, dificultad, combate y física. `src/game/logica.ts` es la etapa, `src/game/ia.ts` la fauna, `src/game/criaturas.ts` los modelos low-poly y `src/game/render3d.ts` el dibujo con three.js.
+En `src/core/*` está la lógica pura: formas, especies, biomas, mundo por trozos, mutaciones, dificultad, combate y física. `src/game/logica.ts` es la etapa, `src/game/ia.ts` la fauna, `src/game/criaturas.ts` los modelos low-poly y `src/game/render3d.ts` el dibujo con three.js.

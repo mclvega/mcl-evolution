@@ -16,18 +16,13 @@ function andar(p: Partida, f: Fauna, dirYaw: number, velocidad: number, dt: numb
   p.mover(f.cuerpo, -Math.sin(f.yaw) * velocidad * dt, -Math.cos(f.yaw) * velocidad * dt, dt);
 }
 
+/** Siguiente sitio al que pasear. Si se aleja mucho del jugador, vuelve hacia él (así sigue habiendo fauna cerca). */
 function nuevoDestino(p: Partida, f: Fauna) {
-  const a = Math.random() * Math.PI * 2;
+  const j = p.jugador.cuerpo;
+  const lejos = Math.hypot(f.cuerpo.x - j.x, f.cuerpo.z - j.z) > 50;
+  const a = lejos ? Math.atan2(j.z - f.cuerpo.z, j.x - f.cuerpo.x) + (Math.random() - 0.5) : Math.random() * Math.PI * 2;
   const d = 4 + Math.random() * 10;
-  const R = p.region.radio - 5;
-  let x = f.cuerpo.x + Math.cos(a) * d;
-  let z = f.cuerpo.z + Math.sin(a) * d;
-  const l = Math.hypot(x, z);
-  if (l > R) {
-    x *= R / l;
-    z *= R / l;
-  }
-  f.destino = { x, z };
+  f.destino = { x: f.cuerpo.x + Math.cos(a) * d, z: f.cuerpo.z + Math.sin(a) * d };
   f.t = 3 + Math.random() * 5;
 }
 
@@ -97,11 +92,8 @@ export function actualizarFauna(p: Partida, f: Fauna, dt: number) {
         f.t = 0;
         return;
       }
-      // Huye hacia el lado contrario; cerca del borde se desvía hacia el centro.
-      let yaw = haciaJugador + Math.PI + Math.sin(p.tiempo * 1.3 + f.id) * 0.5;
-      const bx = f.cuerpo.x - Math.sin(yaw) * 6;
-      const bz = f.cuerpo.z - Math.cos(yaw) * 6;
-      if (Math.hypot(bx, bz) > p.region.radio - 6) yaw = yawHacia(f.cuerpo.x, f.cuerpo.z, 0, 0) + (f.id % 2 ? 0.9 : -0.9);
+      // Huye hacia el lado contrario, zigzagueando.
+      const yaw = haciaJugador + Math.PI + Math.sin(p.tiempo * 1.3 + f.id) * 0.5;
       andar(p, f, yaw, f.velocidad, dt);
       return;
     }

@@ -8,12 +8,11 @@ import { formaDeEtapa } from './core/formas';
 import { Entrada } from './core/input';
 import { iniciarBucle } from './core/loop';
 import { mutacionPorId, MUTACIONES, nivelMutacion } from './core/mutaciones';
-import { biomaDe } from './core/biomas';
 import { iniciarPantallaCompleta } from './fullscreen';
 import { controlesVacios, Partida, type Resumen } from './game/logica';
 import type { Render3D } from './game/render3d';
 import { Rendimiento, tamanoSombras } from './rendimiento';
-import { anotarEtapa, avanceNuevo, limpiarNombre } from './storage';
+import { anotarEtapa, anotarRecord, avanceNuevo, limpiarNombre } from './storage';
 import { panelConfiguracion } from './ui/configuracion';
 import { boton, h, mostrarPanel } from './ui/dom';
 
@@ -168,9 +167,10 @@ function menu() {
     h('div', { class: 'tarjeta' },
       h('h1', { text: '🧬 McL Evolution' }),
       h('p', { class: 'texto-suave', text: `¡Hola, ${app.nombre()}! · ${f.forma.icono} ${f.nombre} · Mejor: etapa ${Math.max(1, app.g.estadisticas.etapaMax)}` }),
-      boton(etapa > 1 ? `Continuar: etapa ${etapa} (${biomaDe(etapa).nombre})` : 'Jugar', empezar, { variante: 'primario', icono: '▶' }),
-      etapa > 1 ? boton('Empezar de cero', () => {
-        if (!confirm('Tu linaje actual se queda en los récords y vuelves a ser un gusano, sin mutaciones. ¿Seguro?')) return;
+      boton(a ? `Continuar: etapa ${etapa} (${f.forma.icono} ${f.nombre})` : 'Jugar', empezar, { variante: 'primario', icono: '▶' }),
+      a ? boton('Nuevo linaje', () => {
+        if (!confirm('Tu linaje actual se queda en los récords y empiezas de nuevo como gusano en otro mundo. ¿Seguro?')) return;
+        anotarRecord(app.g, a, app.nombre());
         app.g.avance = null;
         app.guardar();
         menu();
@@ -225,6 +225,8 @@ let marcaDano = 0;
 let marcaEvolucion = 0;
 let resumenFinal: Resumen | null = null;
 let faseMostrada = '';
+/** El linaje que acaba de extinguirse entró en la tabla de récords. */
+let recordFinal = false;
 
 async function empezar() {
   audio.iniciar();
@@ -240,6 +242,8 @@ async function empezar() {
   const p = new Partida({
     etapa: a.etapa,
     semilla: a.semilla,
+    x: a.x,
+    z: a.z,
     mutaciones: a.mutaciones,
     modo: MODOS[app.g.config.dificultad],
     eventos: {
@@ -263,13 +267,13 @@ async function empezar() {
         marcaEvolucion = 1;
         audio.efecto('nivel');
         vibrar(120);
-        anotarEtapa(app.g, r, p.mutaciones, app.nombre());
+        anotarEtapa(app.g, r, p.mutaciones, app.nombre(), { x: p.jugador.cuerpo.x, z: p.jugador.cuerpo.z });
         app.guardar();
       },
       fin: (r) => {
         resumenFinal = r;
         audio.efecto('muerte');
-        anotarEtapa(app.g, r, p.mutaciones, app.nombre());
+        recordFinal = anotarEtapa(app.g, r, p.mutaciones, app.nombre());
         app.guardar();
       },
     },
@@ -293,12 +297,17 @@ function pausar() {
   mostrarPanel(
     h('div', { class: 'tarjeta' },
       h('h2', { text: '⏸ Pausa' }),
-      h('p', { class: 'texto-suave', text: `Etapa ${p.etapa} · ${p.region.bioma.nombre} · ${p.forma.icono} ${p.nombreForma} · 🧬 ${Math.floor(p.adn)}/${p.meta} · 🍖 ${p.presas}` }),
+      h('p', { class: 'texto-suave', text: `Etapa ${p.etapa} · ${p.bioma.nombre} · Zona ${p.zona + 1} · ${p.forma.icono} ${p.nombreForma} · 🧬 ${Math.floor(p.adn)}/${p.meta} · 🍖 ${p.presas}` }),
       boton('Continuar', continuar, { variante: 'primario', icono: '▶' }),
       boton('Mis mutaciones', () => misMutaciones(pausar2), { icono: '🧪' }),
       boton('Configuración', () => configuracion(pausar2, true), { icono: '⚙️' }),
       boton('Salir', () => {
-        if (!confirm('Perderás el ADN de esta etapa (tu forma y tus mutaciones se guardan). ¿Seguro?')) return;
+        if (!confirm('Perderás el ADN de esta etapa (tu forma, tus mutaciones y tu sitio en el mundo se guardan). ¿Seguro?')) return;
+        if (app.g.avance) {
+          app.g.avance.x = p.jugador.cuerpo.x;
+          app.g.avance.z = p.jugador.cuerpo.z;
+          app.guardar();
+        }
         menu();
       }, { icono: '🚪' }),
     ),
@@ -323,7 +332,7 @@ function misMutaciones(volver: () => void) {
   const tomadas = MUTACIONES.filter((d) => nivelMutacion(m, d.id) > 0);
   const lista = tomadas.length
     ? tomadas.map((d) => h('div', { class: 'mutacion' }, h('strong', { text: `${d.icono} ${d.nombre}${d.max > 1 ? ` (${nivelMutacion(m, d.id)}/${d.max})` : ''}` }), h('small', { text: d.texto })))
-    : [h('p', { class: 'texto-suave', text: 'Aún no tienes mutaciones. Al vencer al Alfa de cada región podrás elegir una.' })];
+    : [h('p', { class: 'texto-suave', text: 'Aún no tienes mutaciones. Cada vez que vences a un Alfa y evolucionas podrás elegir una.' })];
   mostrarPanel(
     h('div', { class: 'tarjeta ancha' },
       h('div', { class: 'cabecera' }, boton('Volver', volver, { icono: '←' }), h('h2', { text: '🧪 Mis mutaciones' })),
@@ -333,6 +342,17 @@ function misMutaciones(volver: () => void) {
 }
 
 const minutos = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+
+/** Tras elegir la mutación: la criatura evoluciona en el mismo sitio del mundo y se sigue jugando. */
+function seguirEvolucion(p: Partida) {
+  p.continuarEvolucion();
+  controles.querySelector("[aria-label='rugido']")?.classList.toggle('oculto', !p.stats.rugido);
+  controles.querySelector("[aria-label='escupir']")?.classList.toggle('oculto', !p.stats.escupitajo);
+  faseMostrada = '';
+  resumenFinal = null;
+  mostrarPanel(null);
+  jugando(true);
+}
 
 /** Pantallas al terminar la etapa: evolución (elegir mutación) o caída. */
 function pantallaFase(p: Partida) {
@@ -359,7 +379,7 @@ function pantallaFase(p: Partida) {
             const m = p.elegirMutacion(i);
             if (app.g.avance) app.g.avance.mutaciones = { ...m };
             app.guardar();
-            pantallaFase(p);
+            seguirEvolucion(p);
           });
           return b;
         }),
@@ -368,15 +388,13 @@ function pantallaFase(p: Partida) {
     return;
   }
   if (p.fase === 'evolucion') {
+    // Sin mutaciones que ofrecer (todas al máximo): se evoluciona directamente.
     const sig = formaDeEtapa(p.etapa + 1);
     mostrarPanel(
       h('div', { class: 'tarjeta' },
-        h('h2', { text: `${sig.forma.icono} ¡Ahora eres ${sig.nombre}!` }),
-        h('p', { class: 'texto-suave', text: `Etapa ${p.etapa} superada. ${datos}.` }),
-        h('p', { class: 'texto-suave', text: `Siguiente región: ${biomaDe(p.etapa + 1).icono} ${biomaDe(p.etapa + 1).nombre}.` }),
-        boton(`Seguir a la etapa ${p.etapa + 1}`, empezar, { variante: 'primario', icono: '▶' }),
-        boton('Mis mutaciones', () => misMutaciones(() => pantallaFase(p)), { icono: '🧪', variante: 'suave' }),
-        boton('Menú', menu, { icono: '🏠' }),
+        h('h2', { text: `${sig.forma.icono} ¡Evolucionas a ${sig.nombre}!` }),
+        h('p', { class: 'texto-suave', text: `Etapa ${p.etapa} superada. ${datos}. Ya tienes todas las mutaciones al máximo.` }),
+        boton('Seguir', () => seguirEvolucion(p), { variante: 'primario', icono: '▶' }),
       ),
     );
     return;
@@ -384,10 +402,10 @@ function pantallaFase(p: Partida) {
   if (p.fase === 'fin') {
     mostrarPanel(
       h('div', { class: 'tarjeta' },
-        h('h2', { text: '💀 Has caído' }),
-        h('p', { class: 'texto-suave', text: `Etapa ${r.etapa} (${biomaDe(r.etapa).nombre}) · ${datos}.` }),
-        h('p', { class: 'texto-suave', text: 'Conservas tu forma y tus mutaciones. Reintenta la etapa cuando quieras.' }),
-        boton('Reintentar', empezar, { variante: 'primario', icono: '↻' }),
+        h('h2', { text: '💀 Tu linaje se extingue' }),
+        h('p', { class: 'texto-suave', text: `Llegaste a la etapa ${r.etapa} · ${datos}.` }),
+        h('p', { class: 'texto-suave', text: recordFinal ? '🏆 ¡Entra en tus mejores linajes!' : 'Vuelves a empezar como gusano en un mundo nuevo.' }),
+        boton('Empezar de nuevo', empezar, { variante: 'primario', icono: '🥚' }),
         boton('Menú', menu, { icono: '🏠' }),
       ),
     );
@@ -602,7 +620,7 @@ function dibujarHud(p: Partida, dt: number) {
   // Etapa y región (arriba en el centro), y barra del Alfa.
   ctx.textAlign = 'center';
   ctx.font = 'bold 15px system-ui, sans-serif';
-  sombra(`Etapa ${p.etapa} · ${p.region.bioma.icono} ${p.region.bioma.nombre} · ${p.forma.icono} ${p.nombreForma}`, cx, 20);
+  sombra(`Etapa ${p.etapa} · ${p.bioma.icono} ${p.bioma.nombre} · Zona ${p.zona + 1} · ${p.forma.icono} ${p.nombreForma}`, cx, 20);
   const alfa = p.alfa && p.alfa.estado !== 'muerto' ? p.alfa : null;
   if (alfa) {
     const w = Math.min(420, ancho * 0.5);
@@ -696,7 +714,7 @@ iniciarBucle(
 if (import.meta.env.DEV && location.search.includes('demo')) {
   // Pruebas: ?demo&etapa=8 empieza directamente en esa etapa (sin guardar).
   const etapa = Number(new URLSearchParams(location.search).get('etapa'));
-  if (etapa > 0) app.g.avance = { ...avanceNuevo(), etapa };
+  if (etapa > 0) app.g.avance = { ...avanceNuevo(), etapa, x: Number(new URLSearchParams(location.search).get('x')) || 0 };
   void empezar().then(() => {
     if (partida && location.search.includes('alfa')) partida.adn = partida.meta;
   });

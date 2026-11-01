@@ -1,4 +1,4 @@
-import { biomaDe, type Bioma, type IdBioma } from './biomas';
+import { BIOMAS, type Bioma, type IdBioma } from './biomas';
 import { bloque, type Bloque } from './fisica';
 import { crearRng } from './rng';
 
@@ -28,12 +28,12 @@ export interface Charco {
   r: number;
 }
 
-export interface Region {
-  etapa: number;
-  semilla: number;
+/** Trozo cuadrado del mundo infinito: se genera igual siempre con la misma semilla. */
+export interface Trozo {
+  clave: string;
+  cx: number;
+  cz: number;
   bioma: Bioma;
-  /** Radio jugable; el borde es un anillo de rocas. */
-  radio: number;
   /** Árboles (troncos) y rocas que chocan. */
   bloques: Bloque[];
   adornos: Adorno[];
@@ -41,7 +41,52 @@ export interface Region {
   comida: SitioComida[];
 }
 
-export const RADIO_REGION = 60;
+/** Lado de un trozo, en metros. */
+export const TROZO = 32;
+/** Lado de las zonas de bioma, en metros. */
+const ZONA_BIOMA = 150;
+/** Cada cuántos metros desde el origen sube el nivel de la zona (fauna más fuerte). */
+const PASO_NIVEL = 180;
+
+export const claveTrozo = (cx: number, cz: number) => `${cx},${cz}`;
+
+/** Número pseudoaleatorio entero a partir de coordenadas y semilla. */
+function hash(a: number, b: number, semilla: number): number {
+  let h = Math.imul(a | 0, 0x27d4eb2d) ^ Math.imul(b | 0, 0x165667b1) ^ Math.imul(semilla | 0, 0x9e3779b1);
+  h = Math.imul(h ^ (h >>> 15), 0x85ebca6b);
+  h = Math.imul(h ^ (h >>> 13), 0xc2b2ae35);
+  return (h ^ (h >>> 16)) >>> 0;
+}
+
+/**
+ * Bioma de un punto: zonas grandes de forma irregular (celdas con el centro desplazado, como un Voronoi).
+ * Alrededor del origen (90 m) siempre es la charca, para empezar tranquilo.
+ */
+export function biomaEn(x: number, z: number, semilla: number): Bioma {
+  if (x * x + z * z < 90 * 90) return BIOMAS[0];
+  const ci = Math.floor(x / ZONA_BIOMA);
+  const cj = Math.floor(z / ZONA_BIOMA);
+  let mejor = Infinity;
+  let bi = 0;
+  let bj = 0;
+  for (let i = ci - 1; i <= ci + 1; i++) {
+    for (let j = cj - 1; j <= cj + 1; j++) {
+      const h = hash(i, j, semilla);
+      const px = (i + 0.15 + ((h & 0xffff) / 0xffff) * 0.7) * ZONA_BIOMA;
+      const pz = (j + 0.15 + ((h >>> 16) / 0xffff) * 0.7) * ZONA_BIOMA;
+      const d = (px - x) ** 2 + (pz - z) ** 2;
+      if (d < mejor) {
+        mejor = d;
+        bi = i;
+        bj = j;
+      }
+    }
+  }
+  return BIOMAS[hash(bi, bj, semilla ^ 0x5bd1e995) % BIOMAS.length];
+}
+
+/** Nivel de la zona: sube con la distancia al origen (la fauna es más fuerte y da más ADN). */
+export const nivelZona = (x: number, z: number) => Math.floor(Math.hypot(x, z) / PASO_NIVEL);
 
 /** ADN y vida que da cada tipo de comida vegetal. */
 export const COMIDA: Record<TipoComida | 'carne', { adn: number; cura: number }> = {
@@ -91,36 +136,37 @@ export const REBROTE = 25;
 /** ADN para llenar la barra en una etapa (antes de la dificultad). */
 export const metaAdn = (etapa: number) => Math.round(120 * (1 + Math.max(0, etapa - 1) * 0.12));
 
-/** Genera la región de una etapa: siempre la misma con la misma semilla. El centro queda despejado para empezar. */
-export function generarRegion(etapa: number, semilla: number): Region {
-  const rng = crearRng((semilla ^ Math.imul(etapa, 0x9e3779b1)) >>> 0);
-  const bioma = biomaDe(etapa);
-  const radio = RADIO_REGION;
+/** Genera un trozo del mundo. El trozo del origen deja libre el centro para empezar. */
+export function generarTrozo(cx: number, cz: number, semilla: number): Trozo {
+  const rng = crearRng(hash(cx, cz, semilla));
+  const x0 = cx * TROZO;
+  const z0 = cz * TROZO;
+  const bioma = biomaEn(x0 + TROZO / 2, z0 + TROZO / 2, semilla);
   const bloques: Bloque[] = [];
-  const ocupados: Array<{ x: number; z: number; r: number }> = [{ x: 0, z: 0, r: 6 }];
+  const ocupados: Array<{ x: number; z: number; r: number }> = cx === 0 && cz === 0 ? [{ x: 0, z: 0, r: 6 }] : [];
+  // También el centro cuando el origen cae en el borde de otro trozo.
+  if (Math.abs(x0) <= TROZO && Math.abs(z0) <= TROZO) ocupados.push({ x: 0, z: 0, r: 6 });
   const libre = (x: number, z: number, r: number) => ocupados.every((o) => Math.hypot(o.x - x, o.z - z) > o.r + r);
-  const sitio = (r: number, min = 0, max = radio - 4): { x: number; z: number } | null => {
-    for (let i = 0; i < 30; i++) {
-      const a = rng.rango(0, Math.PI * 2);
-      const d = Math.sqrt(rng.rango((min / radio) ** 2, (max / radio) ** 2)) * radio;
-      const x = Math.cos(a) * d;
-      const z = Math.sin(a) * d;
+  const sitio = (r: number): { x: number; z: number } | null => {
+    for (let i = 0; i < 12; i++) {
+      const x = x0 + rng.rango(r, TROZO - r);
+      const z = z0 + rng.rango(r, TROZO - r);
       if (libre(x, z, r)) return { x, z };
     }
     return null;
   };
+  const varios = (media: number) => Math.floor(media) + (rng.siguiente() < media % 1 ? 1 : 0);
 
   // Árboles: un tronco que choca; la copa es decoración.
-  const arboles = bioma.vegetacion === 'roca' ? 6 : bioma.vegetacion === 'flor' ? 14 : 34;
+  const arboles = varios(bioma.vegetacion === 'roca' ? 0.6 : bioma.vegetacion === 'flor' ? 1.3 : 3);
   for (let i = 0; i < arboles; i++) {
     const s = sitio(1.6);
     if (!s) continue;
-    const alto = rng.rango(3, 5.5);
-    bloques.push(bloque('tronco', s.x, s.z, 0.7, 0.7, alto, 0, rng.entero(0, 2)));
+    bloques.push(bloque('tronco', s.x, s.z, 0.7, 0.7, rng.rango(3, 5.5), 0, rng.entero(0, 2)));
     ocupados.push({ x: s.x, z: s.z, r: 1.6 });
   }
   // Rocas: algunas bajas, a las que se puede subir de un salto.
-  const rocas = bioma.vegetacion === 'roca' ? 30 : 16;
+  const rocas = varios(bioma.vegetacion === 'roca' ? 2.8 : 1.5);
   for (let i = 0; i < rocas; i++) {
     const w = rng.rango(1.2, 4);
     const d = rng.rango(1.2, 4);
@@ -129,25 +175,19 @@ export function generarRegion(etapa: number, semilla: number): Region {
     bloques.push(bloque('roca', s.x, s.z, w, d, rng.rango(0.8, 2.6), 0, rng.entero(0, 2)));
     ocupados.push({ x: s.x, z: s.z, r: Math.max(w, d) / 2 + 0.8 });
   }
-  // Anillo de rocas grandes en el borde.
-  const n = 44;
-  for (let i = 0; i < n; i++) {
-    const a = (i / n) * Math.PI * 2;
-    const r = radio + 2.5;
-    bloques.push(bloque('roca', Math.cos(a) * r, Math.sin(a) * r, 6, 6, rng.rango(3, 5), 0, 3));
-  }
 
   const charcos: Charco[] = [];
-  for (let i = 0; i < 5; i++) {
-    const r = rng.rango(2, 5);
-    const s = sitio(r, 10);
-    if (!s) continue;
-    charcos.push({ ...s, r });
-    ocupados.push({ x: s.x, z: s.z, r });
+  if (rng.siguiente() < 0.4) {
+    const r = rng.rango(2, 4.5);
+    const s = sitio(r);
+    if (s) {
+      charcos.push({ ...s, r });
+      ocupados.push({ x: s.x, z: s.z, r });
+    }
   }
 
   const adornos: Adorno[] = [];
-  for (let i = 0; i < 150; i++) {
+  for (let i = 0; i < 14; i++) {
     const s = sitio(0.3);
     if (!s) continue;
     const t = rng.siguiente();
@@ -156,12 +196,12 @@ export function generarRegion(etapa: number, semilla: number): Region {
   }
 
   const comida: SitioComida[] = [];
-  for (let i = 0; i < 54; i++) {
-    const s = sitio(0.6, 3);
+  for (let i = varios(5); i > 0; i--) {
+    const s = sitio(0.6);
     if (!s) continue;
     comida.push({ ...s, tipo: sortearPeso(PESOS_COMIDA[bioma.id], rng.siguiente()) });
     ocupados.push({ x: s.x, z: s.z, r: 0.6 });
   }
 
-  return { etapa, semilla, bioma, radio, bloques, adornos, charcos, comida };
+  return { clave: claveTrozo(cx, cz), cx, cz, bioma, bloques, adornos, charcos, comida };
 }

@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
-import { TIPOS_COMIDA, type TipoComida } from '../core/region';
+import { TIPOS_COMIDA, TROZO, type TipoComida, type Trozo } from '../core/mundo';
 import { liberar } from '../rendimiento';
 import type { Aspecto } from './aspecto';
 import { animarCriatura, aspectoFauna, crearCriatura, malla, mat, type ModeloCriatura } from './criaturas';
@@ -64,12 +64,18 @@ function unir(...piezas: Pieza[]): THREE.BufferGeometry {
 }
 
 const matVertices = new THREE.MeshLambertMaterial({ vertexColors: true });
+const matBrillo = new THREE.MeshBasicMaterial({ vertexColors: true });
 
 export class Render3D {
   readonly renderer: THREE.WebGLRenderer;
   readonly camara = new THREE.PerspectiveCamera(60, 1, 0.1, 220);
   private escena = new THREE.Scene();
-  private estatico = new THREE.Group();
+  /** Un grupo de mallas por trozo cargado del mundo. */
+  private grupos = new Map<string, THREE.Group>();
+  private versionTrozos = -1;
+  private colorCielo = new THREE.Color();
+  private colorLuz = new THREE.Color();
+  private objetivo = new THREE.Color();
   private partida: Partida | null = null;
   private oscuro = false;
   private jugador: Modelo | null = null;
@@ -105,7 +111,10 @@ export class Render3D {
     this.sol.shadow.mapSize.set(1024, 1024);
     Object.assign(this.sol.shadow.camera, { left: -22, right: 22, top: 22, bottom: -22, near: 1, far: 90 });
     this.sol.position.set(14, 40, 10);
-    this.escena.add(this.hemi, this.sol, this.sol.target, this.estatico, this.camara);
+    this.escena.add(this.hemi, this.sol, this.sol.target, this.camara);
+    this.escena.background = this.colorCielo;
+    this.escena.fog = new THREE.Fog(0x000000, 34, 95);
+    this.construirComida();
     this.marcaFijado = malla(new THREE.TorusGeometry(1, 0.05, 4, 28).rotateX(Math.PI / 2), mat(0xffffff, true, 0.8), 0, 0.06, 0, false);
     this.escena.add(this.marcaFijado);
   }
@@ -132,52 +141,72 @@ export class Render3D {
     this.camara.updateProjectionMatrix();
   }
 
-  /** Cielo y niebla: en el tema oscuro, negro puro (pantallas AMOLED). */
-  private cielo(p: Partida) {
-    const b = p.region.bioma;
-    const color = this.oscuro ? 0x000000 : b.cielo;
-    this.escena.background = new THREE.Color(color);
-    this.escena.fog = new THREE.Fog(this.oscuro ? 0x000000 : b.niebla, 34, 95);
+  /**
+   * Cielo, niebla y luz del bioma donde está el jugador, con transición suave al cambiar de bioma.
+   * En el tema oscuro, cielo y niebla en negro puro (pantallas AMOLED).
+   */
+  private cielo(p: Partida, dt: number, inmediato: boolean) {
+    const b = p.bioma;
+    const k = inmediato ? 1 : Math.min(1, dt * 1.5);
+    this.colorCielo.lerp(this.objetivo.setHex(this.oscuro ? 0x000000 : b.cielo), k);
+    (this.escena.fog as THREE.Fog).color.lerp(this.objetivo.setHex(this.oscuro ? 0x000000 : b.niebla), k);
+    this.colorLuz.lerp(this.objetivo.setHex(b.luz), k);
+    this.hemi.color.copy(this.colorLuz);
   }
 
-  /** Región nueva: suelo, charcos, rocas, árboles y decoración, fusionados por material. */
-  private construirRegion(p: Partida) {
-    liberar(this.estatico);
-    this.estatico.clear();
-    for (const m of this.fauna.values()) {
-      this.escena.remove(m.contenedor);
-      liberar(m.contenedor);
+  /** Pone al día los trozos dibujados: crea los nuevos y libera los que ya no están cargados. */
+  private sincronizarTrozos(p: Partida) {
+    if (p.version === this.versionTrozos) return;
+    this.versionTrozos = p.version;
+    for (const [clave, g] of this.grupos) {
+      if (p.trozos.has(clave)) continue;
+      this.escena.remove(g);
+      liberar(g);
+      this.grupos.delete(clave);
     }
-    this.fauna.clear();
-    const r = p.region;
-    const b = r.bioma;
-    this.cielo(p);
-    this.hemi.color.setHex(b.luz);
+    for (const [clave, t] of p.trozos) {
+      if (this.grupos.has(clave)) continue;
+      const g = this.construirTrozo(t);
+      this.grupos.set(clave, g);
+      this.escena.add(g);
+    }
+  }
 
-    const porMaterial = new Map<THREE.Material, THREE.BufferGeometry[]>();
-    const fijo = (...ms: THREE.Mesh[]) => {
-      for (const m of ms) {
-        m.updateMatrix();
-        const g = m.geometry.index ? m.geometry.toNonIndexed() : m.geometry;
-        if (g !== m.geometry) m.geometry.dispose();
-        g.applyMatrix4(m.matrix);
-        const material = m.material as THREE.Material;
-        if (!porMaterial.has(material)) porMaterial.set(material, []);
-        porMaterial.get(material)!.push(g);
-      }
+  /** Un trozo: suelo, charcos, rocas, árboles y decoración, fusionados con colores por vértice (2 o 3 mallas). */
+  private construirTrozo(t: Trozo): THREE.Group {
+    const grupo = new THREE.Group();
+    const b = t.bioma;
+    const r = t;
+    const conColor = (m: THREE.Mesh): THREE.BufferGeometry => {
+      m.updateMatrix();
+      const g = m.geometry.index ? m.geometry.toNonIndexed() : m.geometry;
+      if (g !== m.geometry) m.geometry.dispose();
+      g.applyMatrix4(m.matrix);
+      const color = ((m.material as THREE.MeshLambertMaterial).color ?? new THREE.Color(0xffffff)) as THREE.Color;
+      const n = g.getAttribute('position').count;
+      const colores = new Float32Array(n * 3);
+      for (let i = 0; i < n; i++) colores.set([color.r, color.g, color.b], i * 3);
+      g.setAttribute('color', new THREE.BufferAttribute(colores, 3));
+      for (const nombre of Object.keys(g.attributes)) if (nombre !== 'position' && nombre !== 'normal' && nombre !== 'color') g.deleteAttribute(nombre);
+      return g;
     };
-    const suelo = malla(new THREE.CircleGeometry(r.radio + 40, 56).rotateX(-Math.PI / 2), mat(b.suelo), 0, 0, 0, false);
-    suelo.receiveShadow = true;
-    this.estatico.add(suelo);
-    // Manchas del suelo (deterministas por la semilla de la región).
-    let s = r.semilla || 1;
-    const azar = () => ((s = (Math.imul(s, 1103515245) + 12345) >>> 0) / 4294967296);
-    for (let i = 0; i < 40; i++) {
-      const a = azar() * Math.PI * 2;
-      const d = Math.sqrt(azar()) * (r.radio + 10);
-      fijo(malla(new THREE.CircleGeometry(2 + azar() * 5, 9).rotateX(-Math.PI / 2), mat(b.mancha), Math.cos(a) * d, 0.01, Math.sin(a) * d, false));
+    const solidas: THREE.BufferGeometry[] = [];
+    const brillos: THREE.BufferGeometry[] = [];
+    const suelos: THREE.BufferGeometry[] = [];
+    const fijo = (...ms: THREE.Mesh[]) => {
+      for (const m of ms) (m.material instanceof THREE.MeshBasicMaterial ? brillos : solidas).push(conColor(m));
+    };
+    // Suelo del trozo con manchas (deterministas por su posición).
+    const x0 = t.cx * TROZO;
+    const z0 = t.cz * TROZO;
+    suelos.push(conColor(malla(new THREE.PlaneGeometry(TROZO, TROZO).rotateX(-Math.PI / 2), mat(b.suelo), x0 + TROZO / 2, 0, z0 + TROZO / 2, false)));
+    let sem = (Math.imul(t.cx, 73856093) ^ Math.imul(t.cz, 19349663)) >>> 0 || 1;
+    const azar = () => ((sem = (Math.imul(sem, 1103515245) + 12345) >>> 0) / 4294967296);
+    for (let i = 0; i < 3; i++) {
+      const rr = 2 + azar() * 4;
+      suelos.push(conColor(malla(new THREE.CircleGeometry(rr, 9).rotateX(-Math.PI / 2), mat(b.mancha), x0 + rr + azar() * (TROZO - 2 * rr), 0.01, z0 + rr + azar() * (TROZO - 2 * rr), false)));
     }
-    for (const c of r.charcos) fijo(malla(new THREE.CircleGeometry(c.r, 20).rotateX(-Math.PI / 2), mat(b.agua, b.id === 'volcan'), c.x, 0.03, c.z, false));
+    for (const c of r.charcos) suelos.push(conColor(malla(new THREE.CircleGeometry(c.r, 20).rotateX(-Math.PI / 2), mat(b.agua), c.x, 0.03, c.z, false)));
 
     for (const bl of r.bloques) {
       const alto = bl.y1 - bl.y0;
@@ -303,20 +332,22 @@ export class Render3D {
         }
       }
     }
-    for (const [material, geos] of porMaterial) {
-      const m = malla(mergeGeometries(geos), material, 0, 0, 0, !(material instanceof THREE.MeshBasicMaterial));
-      m.receiveShadow = true;
-      this.estatico.add(m);
+    const unirEn = (geos: THREE.BufferGeometry[], material: THREE.Material, sombra: boolean, recibe: boolean) => {
+      if (!geos.length) return;
+      const m = malla(mergeGeometries(geos), material, 0, 0, 0, sombra);
+      m.receiveShadow = recibe;
+      grupo.add(m);
       for (const g of geos) g.dispose();
-    }
-    this.construirComida(p);
+    };
+    unirEn(suelos, matVertices, false, true);
+    unirEn(solidas, matVertices, true, true);
+    unirEn(brillos, matBrillo, false, false);
+    return grupo;
   }
 
   /** Comida con instancias y colores por vértice: una llamada de dibujo por tipo. */
-  private construirComida(p: Partida) {
-    const b = p.region.bioma;
-    if (this.vegetal) for (const m of Object.values(this.vegetal)) this.escena.remove(m);
-    if (this.carne) this.escena.remove(this.carne);
+  private construirComida() {
+    const b = { planta: 0x7ccf4a, fruto: 0xff5a4a };
     const hoja = 0x4f9a3a;
     const anillo = (n: number, r: number, y: number, tam: number, color: number): Pieza[] =>
       Array.from({ length: n }, (_, k): Pieza => [new THREE.SphereGeometry(tam, 5, 4), color, Math.cos((k / n) * Math.PI * 2) * r, y + (k % 2) * 0.06, Math.sin((k / n) * Math.PI * 2) * r]);
@@ -422,14 +453,25 @@ export class Render3D {
   /** `alfa`: fracción del paso de simulación siguiente (1 = posición actual). */
   dibujar(p: Partida, aspecto: Aspecto, oscuro: boolean, efectos: boolean, dt: number, alfa = 1) {
     this.alfa = Math.min(1, Math.max(0, alfa));
+    const nueva = p !== this.partida || oscuro !== this.oscuro;
     if (p !== this.partida) {
+      // Otro linaje: se vacía el mundo dibujado.
       this.partida = p;
-      this.oscuro = oscuro;
-      this.construirRegion(p);
-    } else if (oscuro !== this.oscuro) {
-      this.oscuro = oscuro;
-      this.cielo(p);
+      this.versionTrozos = -1;
+      for (const g of this.grupos.values()) {
+        this.escena.remove(g);
+        liberar(g);
+      }
+      this.grupos.clear();
+      for (const m of this.fauna.values()) {
+        this.escena.remove(m.contenedor);
+        liberar(m.contenedor);
+      }
+      this.fauna.clear();
     }
+    this.oscuro = oscuro;
+    this.cielo(p, dt, nueva);
+    this.sincronizarTrozos(p);
     const j = p.jugador;
     const mj = this.modeloJugador(p, aspecto);
     const pj = this.interpolar(j.cuerpo, j.anterior);

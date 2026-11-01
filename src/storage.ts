@@ -25,11 +25,14 @@ export interface Estadisticas {
 
 const estadisticasNuevas = (): Estadisticas => ({ linajes: 0, etapaMax: 0, evoluciones: 0, presas: 0, alfas: 0, adnTotal: 0, caidas: 0 });
 
-/** Dónde va el linaje actual: «Jugar» continúa desde aquí. */
+/** Dónde va el linaje actual: «Jugar» continúa desde aquí (misma semilla del mundo y mismo sitio). */
 export interface Avance {
   id: number;
   etapa: number;
   semilla: number;
+  /** Posición en el mundo infinito. */
+  x: number;
+  z: number;
   mutaciones: Mutaciones;
   presas: number;
   adn: number;
@@ -54,7 +57,7 @@ export const guardadoNuevo = (): Guardado => ({
 });
 
 /** Linaje nuevo desde la primera forma. */
-export const avanceNuevo = (ahora = Date.now()): Avance => ({ id: ahora, etapa: 1, semilla: (ahora * 2654435761) >>> 0, mutaciones: {}, presas: 0, adn: 0 });
+export const avanceNuevo = (ahora = Date.now()): Avance => ({ id: ahora, etapa: 1, semilla: (ahora * 2654435761) >>> 0, x: 0, z: 0, mutaciones: {}, presas: 0, adn: 0 });
 
 const esObjeto = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
 const entero = (v: unknown, min: number, max: number, porDefecto: number) =>
@@ -94,6 +97,8 @@ function normalizarAvance(v: unknown): Avance | null {
     id: entero(v.id, 0, Number.MAX_SAFE_INTEGER, 0),
     etapa: entero(v.etapa, 1, 1e6, 1),
     semilla: entero(v.semilla, 0, 0xffffffff, 1),
+    x: typeof v.x === 'number' && Number.isFinite(v.x) ? Math.max(-1e7, Math.min(1e7, v.x)) : 0,
+    z: typeof v.z === 'number' && Number.isFinite(v.z) ? Math.max(-1e7, Math.min(1e7, v.z)) : 0,
     mutaciones: normalizarMutaciones(v.mutaciones),
     presas: entero(v.presas, 0, 1e7, 0),
     adn: entero(v.adn, 0, 1e9, 0),
@@ -128,8 +133,12 @@ export function anotarRecord(g: Guardado, a: Avance, nombre: string): boolean {
   return g.records.includes(fila);
 }
 
-/** Anota el final de una etapa: al evolucionar, el linaje pasa a la siguiente. */
-export function anotarEtapa(g: Guardado, r: { etapa: number; presas: number; adn: number; evoluciona: boolean }, mutaciones: Mutaciones, nombre: string): void {
+/**
+ * Anota el final de una etapa. Al evolucionar, el linaje sigue en la etapa siguiente desde el mismo sitio.
+ * Al caer, el linaje se extingue: queda en los récords y la próxima partida empieza de nuevo como gusano.
+ * Devuelve true si el linaje está entre los mejores.
+ */
+export function anotarEtapa(g: Guardado, r: { etapa: number; presas: number; adn: number; evoluciona: boolean }, mutaciones: Mutaciones, nombre: string, pos = { x: 0, z: 0 }): boolean {
   const e = g.estadisticas;
   const a = g.avance ?? avanceNuevo();
   e.presas += r.presas;
@@ -141,11 +150,13 @@ export function anotarEtapa(g: Guardado, r: { etapa: number; presas: number; adn
     e.alfas++;
     a.etapa = r.etapa + 1;
     a.mutaciones = { ...mutaciones };
-    a.semilla = (Math.imul(a.semilla ^ a.etapa, 2654435761) + 1) >>> 0;
   } else e.caidas++;
+  a.x = pos.x;
+  a.z = pos.z;
   e.etapaMax = Math.max(e.etapaMax, a.etapa);
-  g.avance = a;
-  anotarRecord(g, a, nombre);
+  const record = anotarRecord(g, a, nombre);
+  g.avance = r.evoluciona ? a : null;
+  return record;
 }
 
 /** Nombre del jugador: 1 a 20 caracteres; letras, espacios, punto, apóstrofo y guion. */

@@ -6,7 +6,7 @@ import { formaDeRol, poblacion, RASGOS, ROLES, sortearRasgo } from '../src/core/
 import { FORMAS, formaDeEtapa, formaRelativa } from '../src/core/formas';
 import { PASO } from '../src/core/loop';
 import { aplicarMutacion, MUTACIONES, sortearMutaciones, statsJugador } from '../src/core/mutaciones';
-import { generarRegion, metaAdn, TIPOS_COMIDA } from '../src/core/region';
+import { biomaEn, generarTrozo, metaAdn, nivelZona, TIPOS_COMIDA, TROZO } from '../src/core/mundo';
 import { crearRng } from '../src/core/rng';
 import { ASPECTO_POR_DEFECTO, aspectoAleatorio, normalizarAspecto } from '../src/game/aspecto';
 import { controlesVacios, Partida, type Controles } from '../src/game/logica';
@@ -79,9 +79,9 @@ describe('variedad', () => {
     expect(sortearRasgo(20, 'alfa', rng)).toBe('normal');
   });
 
-  it('las regiones tienen comida variada', () => {
+  it('el mundo tiene comida variada', () => {
     const tipos = new Set<string>();
-    for (let e = 1; e <= 7; e++) for (const c of generarRegion(e, 11).comida) tipos.add(c.tipo);
+    for (let i = -12; i <= 12; i++) for (let k = -12; k <= 12; k++) for (const c of generarTrozo(i, k, 11).comida) tipos.add(c.tipo);
     for (const t of TIPOS_COMIDA) expect(tipos.has(t)).toBe(true);
   });
 
@@ -110,14 +110,54 @@ describe('dificultad', () => {
   });
 });
 
-describe('región', () => {
-  it('es determinista por semilla y deja libre el centro', () => {
-    const a = generarRegion(3, 42);
-    const b = generarRegion(3, 42);
-    expect(a).toEqual(b);
-    expect(generarRegion(3, 43).bloques).not.toEqual(a.bloques);
+describe('mundo infinito', () => {
+  it('cada trozo es determinista y el del origen deja libre el centro', () => {
+    const a = generarTrozo(0, 0, 42);
+    expect(generarTrozo(0, 0, 42)).toEqual(a);
+    expect(generarTrozo(5, -3, 42).bloques).not.toEqual(generarTrozo(5, -3, 43).bloques);
     for (const bl of a.bloques) expect(Math.hypot(bl.x, bl.z)).toBeGreaterThan(5);
-    expect(a.comida.length).toBeGreaterThan(20);
+    const t = generarTrozo(7, 2, 42);
+    for (const bl of t.bloques) {
+      expect(bl.x).toBeGreaterThanOrEqual(7 * TROZO);
+      expect(bl.x).toBeLessThanOrEqual(8 * TROZO);
+    }
+  });
+
+  it('los biomas cambian al caminar y la zona sube con la distancia', () => {
+    expect(biomaEn(0, 0, 3).id).toBe('charca');
+    const biomas = new Set<string>();
+    for (let x = -1500; x <= 1500; x += 75) for (let z = -1500; z <= 1500; z += 75) biomas.add(biomaEn(x, z, 3).id);
+    expect(biomas.size).toBeGreaterThanOrEqual(5);
+    expect(nivelZona(0, 0)).toBe(0);
+    expect(nivelZona(1000, 0)).toBeGreaterThan(nivelZona(200, 0));
+  });
+
+  it('al alejarse se cargan y descargan trozos', () => {
+    const p = nueva();
+    const antes = new Set(p.trozos.keys());
+    const version = p.version;
+    p.jugador.cuerpo.x = 500;
+    simular(p, PASO * 2);
+    expect(p.version).toBeGreaterThan(version);
+    expect(p.trozos.size).toBe(25);
+    expect([...p.trozos.keys()].some((k) => antes.has(k))).toBe(false);
+    expect(p.zona).toBeGreaterThan(0);
+  });
+
+  it('la comida comida sigue comida al volver', () => {
+    const p = nueva();
+    const c = p.comida.find((x) => x.clave)!;
+    const clave = c.clave;
+    p.jugador.cuerpo.x = c.x;
+    p.jugador.cuerpo.z = c.z;
+    simular(p, PASO * 2);
+    expect(c.activa).toBe(false);
+    p.jugador.cuerpo.x = 600;
+    simular(p, PASO * 2);
+    expect(p.comida.some((x) => x.clave === clave)).toBe(false);
+    p.jugador.cuerpo.x = c.x + 5;
+    simular(p, PASO * 2);
+    expect(p.comida.find((x) => x.clave === clave)?.activa).toBe(false);
   });
 });
 
@@ -208,6 +248,15 @@ describe('partida', () => {
     expect(p.ofertas).toHaveLength(3);
     const id = p.ofertas[0];
     expect(p.elegirMutacion(0)[id]).toBe(1);
+    // Evoluciona en el mismo sitio del mundo: siguiente forma, ADN a cero.
+    const x = p.jugador.cuerpo.x;
+    p.continuarEvolucion();
+    expect(p.fase).toBe('juego');
+    expect(p.etapa).toBe(2);
+    expect(p.forma.id).toBe('escarabajo');
+    expect(p.adn).toBe(0);
+    expect(p.jugador.cuerpo.x).toBe(x);
+    expect(p.jugador.vida).toBe(p.stats.vidaMax);
   });
 
   it('caer termina la etapa', () => {
@@ -219,6 +268,18 @@ describe('partida', () => {
     expect(fin).toBe(true);
   });
 
+  it('60 s caminando en línea recta: el mundo se genera y la fauna sigue cerca', () => {
+    const p = nueva(3, 21);
+    for (let t = 0; t < 60; t += PASO) {
+      p.jugador.vida = p.stats.vidaMax;
+      p.actualizar(PASO, { ...controlesVacios(), z: -1, correr: true });
+    }
+    const j = p.jugador.cuerpo;
+    expect(Math.hypot(j.x, j.z)).toBeGreaterThan(250);
+    expect(p.fauna.filter((f) => f.estado !== 'muerto').length).toBeGreaterThan(5);
+    for (const f of p.fauna) expect(Math.hypot(f.cuerpo.x - j.x, f.cuerpo.z - j.z)).toBeLessThan(150);
+  });
+
   it('60 s de simulación sin errores, moviéndose y mordiendo', () => {
     const p = nueva(15, 99, { rugido: 1, escupitajo: 1, embestida: 1, veneno: 1 });
     for (let t = 0; t < 60; t += PASO) {
@@ -227,7 +288,6 @@ describe('partida', () => {
     }
     for (const f of p.fauna) {
       expect(Number.isFinite(f.cuerpo.x) && Number.isFinite(f.cuerpo.z)).toBe(true);
-      expect(Math.hypot(f.cuerpo.x, f.cuerpo.z)).toBeLessThanOrEqual(p.region.radio);
     }
     expect(Number.isFinite(p.jugador.vida)).toBe(true);
   });
@@ -266,12 +326,16 @@ describe('guardado', () => {
   it('al evolucionar el linaje pasa a la siguiente etapa y se anota el récord', () => {
     const g = guardadoNuevo();
     g.avance = avanceNuevo(1000);
-    anotarEtapa(g, { etapa: 1, presas: 4, adn: 130, evoluciona: true }, { garras: 1 }, 'Ana');
-    expect(g.avance.etapa).toBe(2);
-    expect(g.avance.mutaciones).toEqual({ garras: 1 });
+    const semilla = g.avance.semilla;
+    anotarEtapa(g, { etapa: 1, presas: 4, adn: 130, evoluciona: true }, { garras: 1 }, 'Ana', { x: 40, z: -12 });
+    expect(g.avance?.etapa).toBe(2);
+    expect(g.avance?.mutaciones).toEqual({ garras: 1 });
+    expect(g.avance?.semilla).toBe(semilla);
+    expect(g.avance?.x).toBe(40);
     expect(g.estadisticas.etapaMax).toBe(2);
+    // Al caer, el linaje se extingue: se empieza de nuevo.
     anotarEtapa(g, { etapa: 2, presas: 1, adn: 20, evoluciona: false }, { garras: 1 }, 'Ana');
-    expect(g.avance.etapa).toBe(2);
+    expect(g.avance).toBeNull();
     expect(g.estadisticas.caidas).toBe(1);
     expect(g.records).toHaveLength(1);
     expect(g.records[0].presas).toBe(5);

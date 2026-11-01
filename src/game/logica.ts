@@ -4,7 +4,8 @@ import { formaDeRol, poblacion, RASGOS, ROLES, sortearRasgo, type DefRol, type R
 import { moverCuerpo, Rejilla, type Cuerpo } from '../core/fisica';
 import { formaDeEtapa, formaPorId, type Forma, type IdForma } from '../core/formas';
 import { aplicarMutacion, sortearMutaciones, statsJugador, type IdMutacion, type Mutaciones, type StatsJugador } from '../core/mutaciones';
-import { COMIDA, generarRegion, metaAdn, REBROTE, type Region, type TipoComida } from '../core/region';
+import { biomaEn, COMIDA, generarTrozo, metaAdn, nivelZona, REBROTE, TROZO, type Trozo, type TipoComida } from '../core/mundo';
+import type { Bioma } from '../core/biomas';
 import { crearRng, type Rng } from '../core/rng';
 import { actualizarFauna } from './ia';
 
@@ -111,6 +112,9 @@ export interface Comida {
   t: number;
   /** Tamaño de la carne, según la presa. */
   escala: number;
+  /** Comida vegetal: trozo y clave estable (para recordar que se comió al volver). */
+  trozo?: string;
+  clave?: string;
 }
 
 export interface Proyectil {
@@ -174,6 +178,9 @@ export interface EventosPartida {
 export interface OpcionesPartida {
   etapa: number;
   semilla: number;
+  /** Dónde empieza el jugador (el avance guardado); por defecto, el origen. */
+  x?: number;
+  z?: number;
   mutaciones: Mutaciones;
   modo: Modo;
   eventos?: EventosPartida;
@@ -185,23 +192,35 @@ const DURACION_MORDISCO = 0.3;
 const RECARGA_MORDISCO = 0.42;
 const DESPAWN_CARNE = 40;
 
-/** Una etapa: la región, el jugador con su forma, la fauna, la comida y el Alfa. */
+/** Trozos cargados alrededor del jugador (a cada lado). */
+const RADIO_TROZOS = 2;
+/** La fauna aparece en este anillo alrededor del jugador y se va más allá de `LEJOS`. */
+const APARECER_MIN = 25;
+const APARECER_MAX = 60;
+const LEJOS = 95;
+
+/** Un linaje en el mundo infinito: el jugador con su forma, los trozos cargados, la fauna, la comida y el Alfa. */
 export class Partida {
-  readonly etapa: number;
+  etapa: number;
   readonly semilla: number;
-  readonly region: Region;
-  readonly rejilla: Rejilla;
-  readonly forma: Forma;
-  readonly nombreForma: string;
+  rejilla = new Rejilla([]);
+  /** Trozos cargados, por clave. */
+  trozos = new Map<string, Trozo>();
+  /** Sube cada vez que cambian los trozos cargados. */
+  version = 0;
+  forma!: Forma;
+  nombreForma = '';
   /** Vuelta del ciclo de formas: más púas. */
-  readonly ciclo: number;
+  ciclo = 0;
   readonly modo: Modo;
   mutaciones: Mutaciones;
-  stats: StatsJugador;
-  readonly meta: number;
+  stats!: StatsJugador;
+  meta = 0;
   readonly eventos: EventosPartida;
   private rng: Rng;
-  private escala: ReturnType<typeof escalaEtapa>;
+  /** Bioma y nivel de la zona donde está el jugador. */
+  bioma: Bioma;
+  zona = 0;
 
   jugador: Jugador;
   fauna: Fauna[] = [];
@@ -226,6 +245,11 @@ export class Partida {
   private sigId = 1;
   private reponer = 0;
   private finT = 0;
+  /** Momento en que empezó la etapa actual (para el resumen). */
+  private inicioEtapa = 0;
+  private trozoActual = '';
+  /** Momento en que vuelve a crecer cada comida vegetal ya comida (por clave). */
+  private rebrotes = new Map<string, number>();
 
   constructor(o: OpcionesPartida) {
     this.etapa = Math.max(1, Math.floor(o.etapa));
@@ -234,27 +258,67 @@ export class Partida {
     this.mutaciones = { ...o.mutaciones };
     this.eventos = o.eventos ?? {};
     this.rng = crearRng((this.semilla * 31 + this.etapa) >>> 0);
-    this.escala = escalaEtapa(this.etapa);
-    this.region = generarRegion(this.etapa, this.semilla);
-    this.rejilla = new Rejilla(this.region.bloques);
+    const x = o.x ?? 0;
+    const z = o.z ?? 0;
+    this.bioma = biomaEn(x, z, this.semilla);
+    this.prepararEtapa();
+    this.jugador = {
+      cuerpo: { x, y: 0, z, vy: 0, radio: this.forma.radio, alto: this.forma.alto, enSuelo: true },
+      anterior: { x, y: 0, z },
+      yaw: 0, vida: this.stats.vidaMax, aguante: this.stats.aguanteMax, agotado: false, estado: 'libre', t: 0, mordido: false,
+      recargaMordisco: 0, recargaRugido: 0, recargaEscupir: 0, invulnerable: 0, moviendose: false, corriendo: false, crecimiento: 1, veneno: 0, dpsVeneno: 0,
+    };
+    this.actualizarTrozos();
+    // Si se empieza dentro de una roca o un tronco (avance guardado), se aparta.
+    this.mover(this.jugador.cuerpo, 0, 0, 0);
+    this.zona = nivelZona(x, z);
+    const pob = poblacion(this.etapa);
+    for (const rol of ['presa', 'rival', 'depredador'] as const) for (let i = 0; i < pob[rol]; i++) this.aparecer(rol, rol === 'depredador' ? 26 : 12);
+    this.avisar(`${this.bioma.icono} ${this.bioma.nombre} · ${this.forma.icono} ${this.nombreForma}`, 3);
+  }
+
+  /** Forma, estadísticas y meta de ADN de la etapa actual. */
+  private prepararEtapa() {
     const f = formaDeEtapa(this.etapa);
     this.forma = f.forma;
     this.ciclo = f.ciclo;
     this.nombreForma = f.nombre;
     this.stats = statsJugador(this.etapa, this.mutaciones);
     this.meta = Math.round(metaAdn(this.etapa));
-    this.jugador = {
-      cuerpo: { x: 0, y: 0, z: 0, vy: 0, radio: this.forma.radio, alto: this.forma.alto, enSuelo: true },
-      anterior: { x: 0, y: 0, z: 0 },
-      yaw: 0, vida: this.stats.vidaMax, aguante: this.stats.aguanteMax, agotado: false, estado: 'libre', t: 0, mordido: false,
-      recargaMordisco: 0, recargaRugido: 0, recargaEscupir: 0, invulnerable: 0, moviendose: false, corriendo: false, crecimiento: 1, veneno: 0, dpsVeneno: 0,
-    };
-    for (const c of this.region.comida) {
-      this.comida.push({ id: this.sigId++, x: c.x, z: c.z, tipo: c.tipo, adn: COMIDA[c.tipo].adn * this.escala.meta, activa: true, t: 0, escala: 1 });
+  }
+
+  /** Escala de la fauna en un punto: la etapa más el nivel de la zona. */
+  escalaEn(x: number, z: number) {
+    return escalaEtapa(this.etapa + nivelZona(x, z));
+  }
+
+  /** Carga los trozos cercanos al jugador, descarga los lejanos y rehace la física. */
+  private actualizarTrozos() {
+    const j = this.jugador.cuerpo;
+    const cx = Math.floor(j.x / TROZO);
+    const cz = Math.floor(j.z / TROZO);
+    const actual = `${cx},${cz}`;
+    if (actual === this.trozoActual) return;
+    this.trozoActual = actual;
+    const quedan = new Set<string>();
+    for (let i = cx - RADIO_TROZOS; i <= cx + RADIO_TROZOS; i++) {
+      for (let k = cz - RADIO_TROZOS; k <= cz + RADIO_TROZOS; k++) {
+        const clave = `${i},${k}`;
+        quedan.add(clave);
+        if (this.trozos.has(clave)) continue;
+        const t = generarTrozo(i, k, this.semilla);
+        this.trozos.set(clave, t);
+        t.comida.forEach((c, n) => {
+          const id = `${clave}:${n}`;
+          const vuelve = this.rebrotes.get(id) ?? 0;
+          this.comida.push({ id: this.sigId++, x: c.x, z: c.z, tipo: c.tipo, adn: 0, activa: vuelve <= this.tiempo, t: Math.max(0, vuelve - this.tiempo), escala: 1, trozo: clave, clave: id });
+        });
+      }
     }
-    const pob = poblacion(this.etapa);
-    for (const rol of ['presa', 'rival', 'depredador'] as const) for (let i = 0; i < pob[rol]; i++) this.aparecer(rol, rol === 'depredador' ? 26 : 12);
-    this.avisar(`${this.region.bioma.icono} ${this.region.bioma.nombre} · ${this.forma.icono} ${this.nombreForma}`, 3);
+    for (const clave of [...this.trozos.keys()]) if (!quedan.has(clave)) this.trozos.delete(clave);
+    this.comida = this.comida.filter((c) => !c.trozo || quedan.has(c.trozo));
+    this.rejilla = new Rejilla([...this.trozos.values()].flatMap((t) => t.bloques));
+    this.version++;
   }
 
   /* ---------- Utilidades ---------- */
@@ -281,20 +345,20 @@ export class Partida {
     this.numeros.push({ x, y, z, valor: Math.max(1, Math.round(valor)), t: 0.8, propio });
   }
 
-  /** Punto libre (sin rocas ni troncos) a cierta distancia del jugador. */
+  /** Punto libre (sin rocas ni troncos) en un anillo alrededor del jugador. */
   private puntoLibre(minDist: number, radio: number): { x: number; z: number } {
     const j = this.jugador.cuerpo;
-    const R = this.region.radio - 4;
+    let x = j.x;
+    let z = j.z;
     for (let i = 0; i < 40; i++) {
       const a = this.rng.rango(0, Math.PI * 2);
-      const d = Math.sqrt(this.rng.siguiente()) * R;
-      const x = Math.cos(a) * d;
-      const z = Math.sin(a) * d;
-      if (Math.hypot(x - j.x, z - j.z) < minDist) continue;
+      const d = this.rng.rango(minDist, Math.max(minDist + 1, APARECER_MAX));
+      x = j.x + Math.cos(a) * d;
+      z = j.z + Math.sin(a) * d;
       const choca = this.rejilla.cerca(x, z).some((b) => Math.abs(x - b.x) < b.w / 2 + radio && Math.abs(z - b.z) < b.d / 2 + radio);
-      if (!choca) return { x, z };
+      if (!choca) break;
     }
-    return { x: -j.x * 0.5, z: R * 0.8 * (j.z > 0 ? -1 : 1) };
+    return { x, z };
   }
 
   /** Crea un animal del papel dado, lejos del jugador. */
@@ -307,14 +371,16 @@ export class Partida {
     const forma = formaPorId(formaId);
     const escala = d.escala * ra.escala * this.rng.rango(0.88, 1.12);
     const p = grupo ? { x: grupo.x + this.rng.rango(-2.5, 2.5), z: grupo.z + this.rng.rango(-2.5, 2.5) } : this.puntoLibre(minDist, forma.radio * escala + 0.3);
-    const vidaMax = d.vida * ra.vida * this.escala.vida * (rol === 'alfa' ? this.modo.alfa : this.modo.vida);
+    // La zona (distancia al origen) hace a la fauna más fuerte y su carne más nutritiva.
+    const esc = this.escalaEn(p.x, p.z);
+    const vidaMax = d.vida * ra.vida * esc.vida * (rol === 'alfa' ? this.modo.alfa : this.modo.vida);
     const f: Fauna = {
       id: this.sigId++,
       rol,
       rasgo,
-      adn: d.adn * ra.adn,
+      adn: d.adn * ra.adn * (1 + 0.25 * nivelZona(p.x, p.z)),
       forma: formaId,
-      color: rol === 'alfa' ? 0x3a2a2a : this.rng.elegir(this.region.bioma.fauna),
+      color: rol === 'alfa' ? 0x3a2a2a : this.rng.elegir(biomaEn(p.x, p.z, this.semilla).fauna),
       d,
       escala,
       cuerpo: { x: p.x, y: 0, z: p.z, vy: 0, radio: forma.radio * escala, alto: forma.alto * escala, enSuelo: true },
@@ -322,7 +388,7 @@ export class Partida {
       yaw: this.rng.rango(-Math.PI, Math.PI),
       vida: vidaMax,
       vidaMax,
-      dano: d.dano * ra.dano * this.escala.dano * this.modo.dano,
+      dano: d.dano * ra.dano * esc.dano * this.modo.dano,
       velocidad: d.velocidad * ra.velocidad * forma.velocidad ** 0.5,
       deteccion: rol === 'depredador' ? d.deteccion * this.modo.deteccion : d.deteccion,
       estado: rol === 'alfa' ? 'perseguir' : 'deambular',
@@ -343,15 +409,9 @@ export class Partida {
     return f;
   }
 
-  /** Mueve un cuerpo con colisiones y lo mantiene dentro de la región. */
+  /** Mueve un cuerpo con colisiones (el mundo no tiene bordes). */
   mover(c: Cuerpo, dx: number, dz: number, dt: number) {
     moverCuerpo(c, dx, dz, dt, this.rejilla);
-    const R = this.region.radio - c.radio;
-    const d = Math.hypot(c.x, c.z);
-    if (d > R) {
-      c.x *= R / d;
-      c.z *= R / d;
-    }
   }
 
   /* ---------- Daño ---------- */
@@ -417,7 +477,7 @@ export class Partida {
     }
     this.presas++;
     // Deja carne: el ADN se gana al comerla.
-    this.comida.push({ id: this.sigId++, x: f.cuerpo.x, z: f.cuerpo.z, tipo: 'carne', adn: f.adn * this.escala.meta, activa: true, t: DESPAWN_CARNE, escala: Math.min(1.6, 0.6 + f.escala * 0.4) });
+    this.comida.push({ id: this.sigId++, x: f.cuerpo.x, z: f.cuerpo.z, tipo: 'carne', adn: f.adn * escalaEtapa(this.etapa).meta, activa: true, t: DESPAWN_CARNE, escala: Math.min(1.6, 0.6 + f.escala * 0.4) });
   }
 
   /* ---------- Bucle ---------- */
@@ -437,6 +497,8 @@ export class Partida {
     this.camPitch = Math.max(0.1, Math.min(1.05, this.camPitch + c.giroY));
 
     this.actualizarJugador(dt, c);
+    this.actualizarTrozos();
+    this.actualizarZona();
     for (const f of this.fauna) actualizarFauna(this, f, dt);
     this.separar();
     this.actualizarComida(dt);
@@ -444,7 +506,10 @@ export class Partida {
     this.actualizarEfectos(dt);
 
     // La fauna muerta se va; los muertos del jugador acaban la etapa.
-    this.fauna = this.fauna.filter((f) => f.estado !== 'muerto' || f.muerteT < 2.2);
+    // La fauna muerta se va, y también la que queda muy lejos (el Alfa vuelve a aparecer si se pierde).
+    const j = this.jugador.cuerpo;
+    this.fauna = this.fauna.filter((f) => (f.estado !== 'muerto' || f.muerteT < 2.2) && (f.estado === 'muerto' || Math.hypot(f.cuerpo.x - j.x, f.cuerpo.z - j.z) < (f.rol === 'alfa' ? LEJOS * 1.5 : LEJOS)));
+    if (this.alfa && !this.fauna.includes(this.alfa) && this.alfa.estado !== 'muerto') this.alfa = null;
     this.reponer -= dt;
     if (this.reponer <= 0) {
       this.reponer = 5;
@@ -660,7 +725,22 @@ export class Partida {
     const pob = poblacion(this.etapa);
     for (const rol of ['presa', 'rival', 'depredador'] as const) {
       const hay = this.fauna.filter((f) => f.rol === rol && f.estado !== 'muerto').length;
-      if (hay < pob[rol]) this.aparecer(rol);
+      if (hay < pob[rol]) this.aparecer(rol, APARECER_MIN);
+    }
+  }
+
+  /** Aviso al entrar en otro bioma o en una zona más peligrosa. */
+  private actualizarZona() {
+    const j = this.jugador.cuerpo;
+    const b = biomaEn(j.x, j.z, this.semilla);
+    const zona = nivelZona(j.x, j.z);
+    if (b !== this.bioma) {
+      this.bioma = b;
+      this.avisar(`${b.icono} Entras en ${b.nombre.toLowerCase()}`, 2.5);
+    }
+    if (zona !== this.zona) {
+      if (zona > this.zona) this.avisar(`⚠️ Zona ${zona + 1}: la fauna es más fuerte`, 2.5);
+      this.zona = zona;
     }
   }
 
@@ -686,11 +766,13 @@ export class Partida {
   private comer(c: Comida) {
     const j = this.jugador;
     const s = this.stats;
-    const ganado = c.adn * s.comida * this.modo.adn;
+    const base = c.tipo === 'carne' ? c.adn : COMIDA[c.tipo].adn * escalaEtapa(this.etapa).meta;
+    const ganado = base * s.comida * this.modo.adn;
     this.adn += ganado;
     j.vida = Math.min(s.vidaMax, j.vida + COMIDA[c.tipo].cura * s.comida * (s.vidaMax / 100));
     c.activa = false;
     c.t = REBROTE;
+    if (c.clave) this.rebrotes.set(c.clave, this.tiempo + REBROTE);
     this.comidas++;
     this.efecto(c.tipo === 'carne' ? 'sangre' : 'comer', c.x, 0.4, c.z, 0.5);
     this.efecto('adn', c.x, 0.6, c.z, 0.9);
@@ -725,7 +807,7 @@ export class Partida {
   /* ---------- Final de la etapa ---------- */
 
   resumen(evoluciona: boolean): Resumen {
-    return { etapa: this.etapa, forma: this.nombreForma, adn: Math.round(this.adn), presas: this.presas, comidas: this.comidas, tiempo: Math.round(this.tiempo), evoluciona };
+    return { etapa: this.etapa, forma: this.nombreForma, adn: Math.round(this.adn), presas: this.presas, comidas: this.comidas, tiempo: Math.round(this.tiempo - this.inicioEtapa), evoluciona };
   }
 
   private evolucionar() {
@@ -737,6 +819,27 @@ export class Partida {
   private terminar() {
     this.fase = 'fin';
     this.eventos.fin?.(this.resumen(false));
+  }
+
+  /** Tras elegir la mutación: siguiente forma en el mismo sitio del mundo. */
+  continuarEvolucion() {
+    this.etapa++;
+    this.prepararEtapa();
+    const j = this.jugador;
+    j.vida = this.stats.vidaMax;
+    j.aguante = this.stats.aguanteMax;
+    j.veneno = 0;
+    j.crecimiento = 1;
+    j.cuerpo.radio = this.forma.radio;
+    j.cuerpo.alto = this.forma.alto;
+    this.adn = 0;
+    this.presas = 0;
+    this.comidas = 0;
+    this.inicioEtapa = this.tiempo;
+    this.alfa = null;
+    this.ofertas = [];
+    this.fase = 'juego';
+    this.avisar(`🧬 ¡Ahora eres ${this.forma.icono} ${this.nombreForma}!`, 3);
   }
 
   /** Mutaciones tras elegir la oferta `i` (o las mismas si no quedan ofertas). */
