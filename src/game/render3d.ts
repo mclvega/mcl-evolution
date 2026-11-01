@@ -77,8 +77,11 @@ export class Render3D {
   private eje = new THREE.Vector3(0, 1, 0);
   private pos = new THREE.Vector3();
   private esc = new THREE.Vector3();
-  private miraX = 0;
-  private miraZ = 0;
+  /** Desplazamiento suavizado de la cámara hacia el objetivo fijado. */
+  private desvioX = 0;
+  private desvioZ = 0;
+  private ip = { x: 0, y: 0, z: 0 };
+  private alfa = 1;
 
   constructor(lienzo: HTMLCanvasElement) {
     this.renderer = new THREE.WebGLRenderer({ canvas: lienzo, antialias: true });
@@ -305,7 +308,18 @@ export class Render3D {
     return this.jugador;
   }
 
-  dibujar(p: Partida, aspecto: Aspecto, oscuro: boolean, efectos: boolean, dt: number) {
+  /** Posición entre el paso anterior y el actual (movimiento suave a cualquier FPS). */
+  private interpolar(c: { x: number; y: number; z: number }, a: { x: number; y: number; z: number }) {
+    const k = this.alfa;
+    this.ip.x = a.x + (c.x - a.x) * k;
+    this.ip.y = a.y + (c.y - a.y) * k;
+    this.ip.z = a.z + (c.z - a.z) * k;
+    return this.ip;
+  }
+
+  /** `alfa`: fracción del paso de simulación siguiente (1 = posición actual). */
+  dibujar(p: Partida, aspecto: Aspecto, oscuro: boolean, efectos: boolean, dt: number, alfa = 1) {
+    this.alfa = Math.min(1, Math.max(0, alfa));
     if (p !== this.partida) {
       this.partida = p;
       this.oscuro = oscuro;
@@ -316,7 +330,11 @@ export class Render3D {
     }
     const j = p.jugador;
     const mj = this.modeloJugador(p, aspecto);
-    mj.contenedor.position.set(j.cuerpo.x, j.cuerpo.y, j.cuerpo.z);
+    const pj = this.interpolar(j.cuerpo, j.anterior);
+    const jx = pj.x;
+    const jy = pj.y;
+    const jz = pj.z;
+    mj.contenedor.position.set(jx, jy, jz);
     mj.contenedor.rotation.y = j.yaw;
     mj.contenedor.scale.setScalar(j.crecimiento);
     mj.contenedor.visible = j.estado !== 'muerto' || p.tiempo % 0.2 < 0.1;
@@ -331,24 +349,26 @@ export class Render3D {
     const alto = p.forma.alto * j.crecimiento;
     const dist = 3.4 + alto * 3;
     const cp = Math.cos(p.camPitch);
-    let mx = j.cuerpo.x;
-    let mz = j.cuerpo.z;
+    // La cámara se coloca y mira desde el mismo punto: solo se suaviza el desvío hacia el objetivo fijado.
+    let dx = 0;
+    let dz = 0;
     if (p.fijado) {
-      mx = (j.cuerpo.x * 2 + p.fijado.cuerpo.x) / 3;
-      mz = (j.cuerpo.z * 2 + p.fijado.cuerpo.z) / 3;
+      dx = (p.fijado.cuerpo.x - j.cuerpo.x) / 3;
+      dz = (p.fijado.cuerpo.z - j.cuerpo.z) / 3;
     }
-    const k = Math.min(1, dt * (efectos ? 6 : 3));
-    this.miraX += (mx - this.miraX) * k;
-    this.miraZ += (mz - this.miraZ) * k;
-    if (Math.hypot(this.miraX - mx, this.miraZ - mz) > 8) {
-      this.miraX = mx;
-      this.miraZ = mz;
-    }
-    const camY = Math.max(0.35, j.cuerpo.y + alto * 0.7 + dist * Math.sin(p.camPitch));
-    this.camara.position.set(j.cuerpo.x + Math.sin(p.camYaw) * dist * cp, camY, j.cuerpo.z + Math.cos(p.camYaw) * dist * cp);
-    this.camara.lookAt(this.miraX, j.cuerpo.y + alto * 0.75, this.miraZ);
-    this.sol.position.set(j.cuerpo.x + 14, 40, j.cuerpo.z + 10);
-    this.sol.target.position.set(j.cuerpo.x, 0, j.cuerpo.z);
+    const k = Math.min(1, dt * 4);
+    this.desvioX += (dx - this.desvioX) * k;
+    this.desvioZ += (dz - this.desvioZ) * k;
+    const fx = jx + this.desvioX;
+    const fz = jz + this.desvioZ;
+    const camY = Math.max(0.35, jy + alto * 0.7 + dist * Math.sin(p.camPitch));
+    this.camara.position.set(fx + Math.sin(p.camYaw) * dist * cp, camY, fz + Math.cos(p.camYaw) * dist * cp);
+    this.camara.lookAt(fx, jy + alto * 0.75, fz);
+    // Las sombras se recolocan a saltos de 4 m: si siguieran al jugador en cada cuadro, sus bordes temblarían.
+    const sx = Math.round(jx / 4) * 4;
+    const sz = Math.round(jz / 4) * 4;
+    this.sol.position.set(sx + 14, 40, sz + 10);
+    this.sol.target.position.set(sx, 0, sz);
 
     const vivos = new Set(p.fauna);
     for (const [f, m] of this.fauna) {
@@ -376,7 +396,8 @@ export class Render3D {
     const j = p.jugador.cuerpo;
     m.contenedor.visible = Math.hypot(f.cuerpo.x - j.x, f.cuerpo.z - j.z) < DISTANCIA_VISIBLE;
     if (!m.contenedor.visible) return;
-    m.contenedor.position.set(f.cuerpo.x, f.cuerpo.y, f.cuerpo.z);
+    const pf = this.interpolar(f.cuerpo, f.anterior);
+    m.contenedor.position.set(pf.x, pf.y, pf.z);
     m.contenedor.rotation.y = f.yaw;
     m.estrellas.visible = f.estado === 'aturdido';
     m.estrellas.rotation.y = p.tiempo * 5;

@@ -29,8 +29,16 @@ export const controlesVacios = (): Controles => ({
 
 export type EstadoJugador = 'libre' | 'mordiendo' | 'muerto';
 
+/** Posición en el paso anterior (el render interpola entre las dos). */
+export interface Punto {
+  x: number;
+  y: number;
+  z: number;
+}
+
 export interface Jugador {
   cuerpo: Cuerpo;
+  anterior: Punto;
   yaw: number;
   vida: number;
   aguante: number;
@@ -61,6 +69,7 @@ export interface Fauna {
   d: DefRol;
   escala: number;
   cuerpo: Cuerpo;
+  anterior: Punto;
   yaw: number;
   vida: number;
   vidaMax: number;
@@ -230,6 +239,7 @@ export class Partida {
     this.meta = Math.round(metaAdn(this.etapa));
     this.jugador = {
       cuerpo: { x: 0, y: 0, z: 0, vy: 0, radio: this.forma.radio, alto: this.forma.alto, enSuelo: true },
+      anterior: { x: 0, y: 0, z: 0 },
       yaw: 0, vida: this.stats.vidaMax, aguante: this.stats.aguanteMax, agotado: false, estado: 'libre', t: 0, mordido: false,
       recargaMordisco: 0, recargaRugido: 0, recargaEscupir: 0, invulnerable: 0, moviendose: false, corriendo: false, crecimiento: 1,
     };
@@ -297,6 +307,7 @@ export class Partida {
       d,
       escala,
       cuerpo: { x: p.x, y: 0, z: p.z, vy: 0, radio: forma.radio * escala, alto: forma.alto * escala, enSuelo: true },
+      anterior: { x: p.x, y: 0, z: p.z },
       yaw: this.rng.rango(-Math.PI, Math.PI),
       vida: vidaMax,
       vidaMax,
@@ -393,6 +404,13 @@ export class Partida {
 
   actualizar(dt: number, c: Controles) {
     if (this.pausada || this.fase !== 'juego') return;
+    const guardar = (c: Cuerpo, a: Punto) => {
+      a.x = c.x;
+      a.y = c.y;
+      a.z = c.z;
+    };
+    guardar(this.jugador.cuerpo, this.jugador.anterior);
+    for (const f of this.fauna) guardar(f.cuerpo, f.anterior);
     this.tiempo += dt;
     this.mensajeT = Math.max(0, this.mensajeT - dt);
     this.camYaw -= c.giroX;

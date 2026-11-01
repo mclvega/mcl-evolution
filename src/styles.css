@@ -157,77 +157,12 @@ input[type='text'] { font: inherit; padding: 12px; border-radius: 10px; border: 
 .oferta small { color: var(--suave); font-weight: 400; }
 .oferta span { font-weight: 400; }
 .mutacion { display: flex; flex-direction: column; gap: 2px; padding: 8px 0; border-bottom: 1px solid rgb(127 140 200 / 0.2); }
-/* ---------- Mando PSP en pantalla (disposición de PPSSPP) ---------- */
-.psp { display: none; position: absolute; inset: 0; pointer-events: none; --psp-borde: rgb(255 255 255 / 0.45); --psp-fondo: rgb(20 20 24 / 0.38); }
-body.tactil.jugando .psp { display: block; }
-/* El mando PSP sustituye al joystick flotante y a los botones genéricos. */
-body.tactil .zona-joystick, body.tactil .botones-tactiles, body.tactil .boton-pausa { display: none !important; }
-body.tactil .zona-mirar { width: 100%; }
-.psp-boton, .psp-cruceta, .psp-stick { position: absolute; pointer-events: auto; touch-action: none; user-select: none; -webkit-user-select: none; }
-.psp-boton {
-  display: grid; place-items: center; color: #fff; font-weight: 700;
-  background: var(--psp-fondo); border: 2px solid var(--psp-borde);
-}
-.psp-boton small { position: absolute; font-size: 9px; font-weight: 600; opacity: 0.75; white-space: nowrap; pointer-events: none; }
-.psp-boton.activo, .psp-flecha.activo { background: rgb(255 255 255 / 0.35); transform: scale(0.94); }
-
-/* Botones de acción en rombo, con los colores de la PSP. */
-.psp-triangulo, .psp-circulo, .psp-cruz, .psp-cuadrado { width: 58px; height: 58px; border-radius: 50%; }
-.psp-simbolo { font-size: 28px; line-height: 1; }
-.psp-triangulo { right: calc(max(14px, env(safe-area-inset-right)) + 60px); bottom: calc(max(14px, env(safe-area-inset-bottom)) + 120px); }
-.psp-cruz { right: calc(max(14px, env(safe-area-inset-right)) + 60px); bottom: max(14px, env(safe-area-inset-bottom)); }
-.psp-cuadrado { right: calc(max(14px, env(safe-area-inset-right)) + 120px); bottom: calc(max(14px, env(safe-area-inset-bottom)) + 60px); }
-.psp-circulo { right: max(14px, env(safe-area-inset-right)); bottom: calc(max(14px, env(safe-area-inset-bottom)) + 60px); }
-.psp-triangulo .psp-simbolo { color: #4fe0a0; }
-.psp-circulo .psp-simbolo { color: #ff6a7a; }
-.psp-cruz .psp-simbolo { color: #7ab8ff; }
-.psp-cuadrado .psp-simbolo { color: #ff9ad8; }
-.psp-triangulo small, .psp-cuadrado small, .psp-circulo small { bottom: -13px; }
-.psp-cruz small { top: -12px; }
-
-/* Gatillos L y R en las esquinas de arriba. */
-.psp-L, .psp-R { top: max(8px, env(safe-area-inset-top)); width: 92px; height: 40px; }
-.psp-L { left: max(8px, env(safe-area-inset-left)); border-radius: 8px 22px 8px 8px; }
-.psp-R { right: max(8px, env(safe-area-inset-right)); border-radius: 22px 8px 8px 8px; }
-.psp-L .psp-simbolo, .psp-R .psp-simbolo { font-size: 20px; }
-.psp-L small, .psp-R small { bottom: -14px; }
-
-/* SELECT y START abajo en el centro. */
-.psp-select, .psp-start { bottom: max(10px, env(safe-area-inset-bottom)); width: 62px; height: 24px; border-radius: 12px; }
-.psp-select { left: calc(50% - 70px); }
-.psp-start { left: calc(50% + 8px); }
-.psp-select .psp-simbolo, .psp-start .psp-simbolo { font-size: 10px; letter-spacing: 1px; }
-.psp-select small, .psp-start small { top: -13px; }
-
-/* Cruceta arriba y stick analógico abajo, como en la PSP. */
-.psp-cruceta { left: max(16px, env(safe-area-inset-left)); bottom: calc(max(14px, env(safe-area-inset-bottom)) + 92px); width: 132px; height: 132px; }
-.psp-flecha { position: absolute; width: 44px; height: 44px; background: var(--psp-fondo); border: 2px solid var(--psp-borde); }
-.psp-arriba { left: 44px; top: 0; border-radius: 8px 8px 2px 2px; }
-.psp-abajo { left: 44px; bottom: 0; border-radius: 2px 2px 8px 8px; }
-.psp-izquierda { left: 0; top: 44px; border-radius: 8px 2px 2px 8px; }
-.psp-derecha { right: 0; top: 44px; border-radius: 2px 8px 8px 2px; }
-.psp-flecha::after { content: ''; position: absolute; inset: 0; margin: auto; width: 0; height: 0; border: 7px solid transparent; }
-.psp-arriba::after { border-bottom-color: #fffa; border-top: 0; }
-.psp-abajo::after { border-top-color: #fffa; border-bottom: 0; }
-.psp-izquierda::after { border-right-color: #fffa; border-left: 0; }
-.psp-derecha::after { border-left-color: #fffa; border-right: 0; }
-.psp-stick { left: calc(max(16px, env(safe-area-inset-left)) + 118px); bottom: max(10px, env(safe-area-inset-bottom)); width: 92px; height: 92px; border-radius: 50%; background: rgb(20 20 24 / 0.25); border: 2px solid rgb(255 255 255 / 0.3); }
-.psp-nub { position: absolute; inset: 0; margin: auto; width: 52px; height: 52px; border-radius: 50%; background: rgb(200 200 210 / 0.55); border: 2px solid #fff8; pointer-events: none; }
-
-/* Pantallas bajas (móvil en horizontal): todo un poco más pequeño. */
-@media (max-height: 420px) {
-  .psp-triangulo, .psp-circulo, .psp-cruz, .psp-cuadrado { width: 52px; height: 52px; }
-  .psp-triangulo { bottom: calc(max(10px, env(safe-area-inset-bottom)) + 104px); right: calc(max(12px, env(safe-area-inset-right)) + 54px); }
-  .psp-cruz { bottom: max(10px, env(safe-area-inset-bottom)); right: calc(max(12px, env(safe-area-inset-right)) + 54px); }
-  .psp-cuadrado { bottom: calc(max(10px, env(safe-area-inset-bottom)) + 52px); right: calc(max(12px, env(safe-area-inset-right)) + 108px); }
-  .psp-circulo { bottom: calc(max(10px, env(safe-area-inset-bottom)) + 52px); right: max(12px, env(safe-area-inset-right)); }
-  .psp-cruceta { width: 114px; height: 114px; bottom: calc(max(10px, env(safe-area-inset-bottom)) + 82px); }
-  .psp-flecha { width: 38px; height: 38px; }
-  .psp-arriba, .psp-abajo { left: 38px; }
-  .psp-izquierda, .psp-derecha { top: 38px; }
-  .psp-stick { left: calc(max(16px, env(safe-area-inset-left)) + 104px); width: 82px; height: 82px; }
-  .psp-nub { width: 46px; height: 46px; }
-}
+/* Botones táctiles: morder grande; rugido y escupitajo solo con esas mutaciones. */
+body.tactil .botones-tactiles { max-width: 46%; align-items: flex-end; }
+.boton-tactil[aria-label='morder'] { width: 86px; height: 86px; font-size: 34px; background: rgb(255 200 61 / 0.25); }
+.boton-tactil[aria-label='saltar'], .boton-tactil[aria-label='correr'] { width: 70px; height: 70px; font-size: 26px; }
+.boton-tactil[aria-label='fijar'], .boton-tactil[aria-label='centrar'], .boton-tactil[aria-label='rugido'], .boton-tactil[aria-label='escupir'] { width: 54px; height: 54px; font-size: 20px; }
+.boton-tactil[aria-label='pausa'], .boton-tactil.oculto { display: none; }
 
 /* Horizontal por defecto: en el móvil en vertical, aviso para girarlo mientras se juega. */
 .girar { display: none; }

@@ -15,7 +15,6 @@ import { Rendimiento, tamanoSombras } from './rendimiento';
 import { anotarEtapa, avanceNuevo, limpiarNombre } from './storage';
 import { panelConfiguracion } from './ui/configuracion';
 import { boton, h, mostrarPanel } from './ui/dom';
-import { ControlesPsp } from './ui/psp';
 
 const hud = document.getElementById('lienzo') as HTMLCanvasElement;
 const ctx = hud.getContext('2d')!;
@@ -23,7 +22,7 @@ const lienzo3d = document.createElement('canvas');
 lienzo3d.id = 'lienzo3d';
 hud.before(lienzo3d);
 const controles = document.getElementById('controles')!;
-// Teclado y mando. En el mando, la misma disposición que el mando PSP en pantalla.
+// Teclado, mando y, en el móvil, joystick flotante a la izquierda y botones con iconos a la derecha.
 const entrada = new Entrada(
   [
     { nombre: 'morder', teclas: [], mando: 2, etiqueta: '🦷' },
@@ -39,11 +38,6 @@ const entrada = new Entrada(
 );
 const tactil = matchMedia('(pointer: coarse)').matches || (import.meta.env.DEV && location.search.includes('tactil'));
 if (tactil) document.body.classList.add('tactil');
-
-/* Mando PSP en pantalla (como PPSSPP), igual que en los otros juegos 3D. */
-const psp = new ControlesPsp(controles, {
-  cuadrado: 'Morder', triangulo: 'Rugido', cruz: 'Saltar', circulo: 'Correr', L: 'Fijar', R: 'Escupir', select: 'Cámara', start: 'Pausa',
-});
 
 let partida: Partida | null = null;
 let render: Render3D | null = null;
@@ -133,13 +127,12 @@ function jugando(si: boolean) {
   document.body.classList.toggle('jugando', si);
   if (!si) {
     entrada.limpiar();
-    psp.limpiar();
     if (document.pointerLockElement) document.exitPointerLock();
   } else if (!tactil) void lienzo3d.requestPointerLock?.();
 }
 
 const AYUDA = tactil
-  ? 'Mando de PSP: stick o cruceta para moverte; arrastra en la pantalla para la cámara. □ morder, ✕ saltar, ○ correr (mantenido), L fija el objetivo. △ rugido y R escupitajo cuando tengas esas mutaciones. Come pasando por encima de la comida y de la carne. Llena la barra de ADN, vence al Alfa y evoluciona.'
+  ? 'Arrastra en la mitad izquierda para moverte y en la derecha para la cámara. 🦷 morder, ⤴ saltar, 💨 correr (mantenido), 🎯 fijar el objetivo y 🎥 centrar la cámara. 📢 rugido y 💦 escupitajo aparecen cuando tienes esas mutaciones. Come pasando por encima de la comida y de la carne. Llena la barra de ADN, vence al Alfa y evoluciona.'
   : 'WASD para moverte y ratón para la cámara. Clic: morder. Espacio: saltar. Mayús: correr. Q: rugido y E: escupitajo (si tienes esas mutaciones). Tab fija el objetivo y C centra la cámara. Come pasando por encima de la comida y de la carne. Llena la barra de ADN, vence al Alfa y evoluciona.';
 
 function bienvenida() {
@@ -286,6 +279,9 @@ async function empezar() {
     },
   });
   partida = p;
+  // Los botones de las mutaciones activas solo se ven si las tienes.
+  controles.querySelector("[aria-label='rugido']")?.classList.toggle('oculto', !p.stats.rugido);
+  controles.querySelector("[aria-label='escupir']")?.classList.toggle('oculto', !p.stats.escupitajo);
   if (import.meta.env.DEV) (window as unknown as { __partida: Partida }).__partida = p;
   if (!render) render = new mod.Render3D(lienzo3d);
   ajustar();
@@ -359,7 +355,7 @@ function pantallaFase(p: Partida) {
           const n = nivelMutacion(p.mutaciones, id);
           const b = h('button', { type: 'button', class: 'btn btn-secundario oferta' },
             h('strong', { text: `${d.icono} ${d.nombre}${d.max > 1 ? ` · nivel ${n + 1}/${d.max}` : ''}` }),
-            h('small', { text: d.activa ? `Activa: ${tactil ? (id === 'rugido' ? '△' : 'R') : id === 'rugido' ? 'Q' : 'E'}` : 'Pasiva' }),
+            h('small', { text: d.activa ? `Activa: ${tactil ? d.icono : id === 'rugido' ? 'Q' : 'E'}` : 'Pasiva' }),
             h('span', { text: d.texto }),
           );
           b.addEventListener('click', () => {
@@ -447,7 +443,7 @@ function recarga(x: number, y: number, icono: string, falta: number, total: numb
   sombra(icono, x, y + 1);
   ctx.globalAlpha = 1;
   ctx.font = 'bold 10px system-ui, sans-serif';
-  sombra(tecla, x + 13, y + 14, '#ddd');
+  if (tecla) sombra(tecla, x + 13, y + 14, '#ddd');
 }
 
 /** Flecha en el borde de la pantalla hacia un punto del mundo. */
@@ -562,8 +558,8 @@ function dibujarHud(p: Partida, dt: number) {
     }
   }
 
-  // Vida, aguante y ADN (arriba a la izquierda; en táctil, a la derecha del botón L).
-  const bx = tactil ? 112 : 14;
+  // Vida, aguante y ADN (arriba a la izquierda).
+  const bx = 14;
   const by = 14;
   const bw = tactil ? Math.min(190, ancho * 0.22) : Math.min(260, ancho * 0.34);
   barra(bx, by, bw, 18, j.vida / s.vidaMax, j.vida > s.vidaMax * 0.3 ? '#5ad13c' : '#ff5a5a');
@@ -580,10 +576,10 @@ function dibujarHud(p: Partida, dt: number) {
   let rx = bx + 18;
   const ry = by + 70;
   if (s.rugido) {
-    recarga(rx, ry, '📢', j.recargaRugido, s.rugido, tactil ? '△' : 'Q');
+    recarga(rx, ry, '📢', j.recargaRugido, s.rugido, tactil ? '' : 'Q');
     rx += 42;
   }
-  if (s.escupitajo) recarga(rx, ry, '💦', j.recargaEscupir, s.escupitajo, tactil ? 'R' : 'E');
+  if (s.escupitajo) recarga(rx, ry, '💦', j.recargaEscupir, s.escupitajo, tactil ? '' : 'E');
 
   // Etapa y región (arriba en el centro), y barra del Alfa.
   ctx.textAlign = 'center';
@@ -599,7 +595,7 @@ function dibujarHud(p: Partida, dt: number) {
   // Presas (arriba a la derecha, junto a la pausa).
   ctx.textAlign = 'right';
   ctx.font = 'bold 14px system-ui, sans-serif';
-  sombra(`🍖 ${p.presas}`, tactil ? ancho - 112 : ancho - 66, 26);
+  sombra(`🍖 ${p.presas}`, ancho - 66, 26);
 
   ctx.textAlign = 'center';
   if (p.mensajeT > 0) {
@@ -623,7 +619,6 @@ let ultimo = performance.now();
 iniciarBucle(
   (dt) => rend.medir('logica', () => {
     entrada.actualizar();
-    psp.actualizar();
     const p = partida;
     if (!p) return;
     if (p.fase !== 'juego') {
@@ -640,33 +635,34 @@ iniciarBucle(
       giroX = giroY = 0;
       return;
     }
-    if (psp.pulsado('start') || entrada.pulsado('pausa')) return pausar();
+    if (entrada.pulsado('pausa')) return pausar();
     const c = controlesVacios();
-    c.x = entrada.x || psp.x;
-    c.z = entrada.y || psp.y;
+    c.x = entrada.x;
+    c.z = entrada.y;
     c.giroX = giroX;
     c.giroY = giroY;
     giroX = giroY = 0;
-    c.morder = mordiscoPendiente || entrada.pulsado('morder') || psp.pulsado('cuadrado');
+    c.morder = mordiscoPendiente || entrada.pulsado('morder');
     mordiscoPendiente = false;
-    c.saltar = entrada.pulsado('saltar') || psp.pulsado('cruz');
-    c.correr = entrada.activo('correr') || psp.activo('circulo');
-    c.rugido = entrada.pulsado('rugido') || psp.pulsado('triangulo');
-    c.escupir = entrada.pulsado('escupir') || psp.pulsado('R');
-    c.fijar = entrada.pulsado('fijar') || psp.pulsado('L');
-    if (entrada.pulsado('centrar') || psp.pulsado('select')) p.camYaw = p.jugador.yaw;
+    c.saltar = entrada.pulsado('saltar');
+    c.correr = entrada.activo('correr');
+    c.rugido = entrada.pulsado('rugido');
+    c.escupir = entrada.pulsado('escupir');
+    c.fijar = entrada.pulsado('fijar');
+    if (entrada.pulsado('centrar')) p.camYaw = p.jugador.yaw;
     p.autoFijar = app.g.config.objetivoAuto;
     p.actualizar(dt, c);
   }),
-  () => {
+  (alfa) => {
     const ahora = performance.now();
-    if (!rend.debeDibujar(ahora, !partida || partida.pausada || partida.fase !== 'juego')) return;
+    const quieto = !partida || partida.pausada || partida.fase !== 'juego';
+    if (!rend.debeDibujar(ahora, quieto)) return;
     const dt = Math.min(0.1, (ahora - ultimo) / 1000);
     fps = fps * 0.9 + (1 / Math.max(0.001, dt)) * 0.1;
     ultimo = ahora;
     if (partida && render) {
       render.sombras(tamanoSombras(app.g.config.calidad));
-      rend.medir('render', () => render!.dibujar(partida!, app.g.aspecto, app.g.config.tema === 'oscuro', !app.g.config.animacionesReducidas, dt));
+      rend.medir('render', () => render!.dibujar(partida!, app.g.aspecto, app.g.config.tema === 'oscuro', !app.g.config.animacionesReducidas, dt, quieto ? 1 : alfa));
       dibujarHud(partida, dt);
     } else {
       ctx.fillStyle = '#000';

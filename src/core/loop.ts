@@ -1,7 +1,8 @@
 /** Bucle de paso fijo (60 Hz): la simulación no depende de los FPS del dispositivo. */
 export const PASO = 1 / 60;
 
-export function iniciarBucle(actualizar: (dt: number) => void, dibujar: () => void): () => void {
+/** `dibujar` recibe la fracción del paso siguiente (0 a 1) para interpolar el movimiento. */
+export function iniciarBucle(actualizar: (dt: number) => void, dibujar: (alfa: number) => void): () => void {
   let acumulado = 0;
   let anterior = performance.now();
   let id = 0;
@@ -15,7 +16,7 @@ export function iniciarBucle(actualizar: (dt: number) => void, dibujar: () => vo
       actualizar(PASO);
       acumulado -= PASO;
     }
-    dibujar();
+    dibujar(acumulado / PASO);
     id = requestAnimationFrame(cuadro);
   };
   id = requestAnimationFrame(cuadro);
