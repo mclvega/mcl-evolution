@@ -157,12 +157,21 @@ input[type='text'] { font: inherit; padding: 12px; border-radius: 10px; border: 
 .oferta small { color: var(--suave); font-weight: 400; }
 .oferta span { font-weight: 400; }
 .mutacion { display: flex; flex-direction: column; gap: 2px; padding: 8px 0; border-bottom: 1px solid rgb(127 140 200 / 0.2); }
-/* Botones táctiles: morder grande; rugido y escupitajo solo con esas mutaciones. */
-body.tactil .botones-tactiles { max-width: 46%; align-items: flex-end; }
-.boton-tactil[aria-label='morder'] { width: 86px; height: 86px; font-size: 34px; background: rgb(255 200 61 / 0.25); }
-.boton-tactil[aria-label='saltar'], .boton-tactil[aria-label='correr'] { width: 70px; height: 70px; font-size: 26px; }
-.boton-tactil[aria-label='rugido'], .boton-tactil[aria-label='escupir'] { width: 54px; height: 54px; font-size: 20px; }
+/* Botones táctiles: morder es el centro de los controles de la derecha y el resto lo rodea en arco.
+   Rugido y escupitajo solo aparecen con esas mutaciones. */
+body.tactil .botones-tactiles {
+  display: block; position: absolute; width: 250px; height: 240px; max-width: none;
+  right: max(12px, env(safe-area-inset-right)); bottom: max(12px, env(safe-area-inset-bottom));
+  pointer-events: none; transform-origin: bottom right;
+}
+body.tactil .boton-tactil { position: absolute; pointer-events: auto; touch-action: none; }
+.boton-tactil[aria-label='morder'] { width: 120px; height: 120px; right: 30px; bottom: 20px; font-size: 48px; background: rgb(255 200 61 / 0.3); border-color: rgb(255 200 61 / 0.75); }
+.boton-tactil[aria-label='saltar'] { width: 72px; height: 72px; right: 169px; bottom: 44px; font-size: 28px; }
+.boton-tactil[aria-label='correr'] { width: 72px; height: 72px; right: 142px; bottom: 118px; font-size: 28px; }
+.boton-tactil[aria-label='escupir'] { width: 60px; height: 60px; right: 80px; bottom: 163px; font-size: 24px; }
+.boton-tactil[aria-label='rugido'] { width: 60px; height: 60px; right: 4px; bottom: 150px; font-size: 24px; }
 .boton-tactil[aria-label='pausa'], .boton-tactil.oculto { display: none; }
+@media (max-height: 420px) { body.tactil .botones-tactiles { transform: scale(0.82); } }
 
 /* Horizontal por defecto: en el móvil en vertical, aviso para girarlo mientras se juega. */
 .girar { display: none; }
