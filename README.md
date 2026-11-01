@@ -8,7 +8,7 @@ Juego de supervivencia y evolución en 3D para el navegador. Empiezas como un gu
 - **El Alfa**: aparece con la barra de ADN llena. Avisa antes de morder, embiste, da pisotones en área y se enfurece a media vida.
 - **Mutaciones**: eliges 1 de 3 al evolucionar, como caparazón, regeneración, garras, patas largas, digestión, olfato, pulmones, colmillos venenosos, rugido, escupitajo o embestida.
 - **🧬 Criatura**: colores de piel, vientre y dibujo del lomo, ojos, cuernos y cola, con vista previa 3D en cualquier forma ya alcanzada.
-- Teclado y ratón, mando y, en el móvil, joystick flotante a la izquierda (arrastrar a la derecha mueve la cámara) y botones con iconos: 🦷 morder, ⤴ saltar, 💨 correr, 🎯 fijar y 🎥 cámara. 📢 rugido y 💦 escupitajo solo aparecen si tienes esas mutaciones.
+- Teclado y ratón, mando y, en el móvil, joystick flotante a la izquierda (arrastrar a la derecha mueve la cámara) y botones con iconos: 🦷 morder, ⤴ saltar y 💨 correr. 📢 rugido y 💦 escupitajo solo aparecen si tienes esas mutaciones.
 - Funciona sin conexión (PWA) y el progreso queda en el navegador.
 
 Publicado en https://mcl-evolution.netlify.app

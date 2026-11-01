@@ -30,8 +30,6 @@ const entrada = new Entrada(
     { nombre: 'correr', teclas: ['ShiftLeft', 'ShiftRight'], mando: 1, etiqueta: '💨' },
     { nombre: 'rugido', teclas: ['KeyQ'], mando: 3, etiqueta: '📢' },
     { nombre: 'escupir', teclas: ['KeyE'], mando: 5, etiqueta: '💦' },
-    { nombre: 'fijar', teclas: ['Tab'], mando: 4, etiqueta: '🎯' },
-    { nombre: 'centrar', teclas: ['KeyC'], mando: 8, etiqueta: '🎥' },
     { nombre: 'pausa', teclas: [], mando: 9, etiqueta: '⏸' },
   ],
   controles,
@@ -89,9 +87,6 @@ lienzo3d.addEventListener('mousedown', (e) => {
   if (e.button === 0) mordiscoPendiente = true;
 });
 addEventListener('contextmenu', (e) => e.preventDefault());
-addEventListener('keydown', (e) => {
-  if (e.code === 'Tab' && partida) e.preventDefault();
-});
 document.addEventListener('pointerlockchange', () => {
   if (document.pointerLockElement !== lienzo3d && partida?.fase === 'juego' && !partida.pausada && !tactil && document.body.classList.contains('jugando')) pausar();
 });
@@ -132,8 +127,8 @@ function jugando(si: boolean) {
 }
 
 const AYUDA = tactil
-  ? 'Arrastra en la mitad izquierda para moverte y en la derecha para la cámara. 🦷 morder, ⤴ saltar, 💨 correr (mantenido), 🎯 fijar el objetivo y 🎥 centrar la cámara. 📢 rugido y 💦 escupitajo aparecen cuando tienes esas mutaciones. Come pasando por encima de la comida y de la carne. Llena la barra de ADN, vence al Alfa y evoluciona.'
-  : 'WASD para moverte y ratón para la cámara. Clic: morder. Espacio: saltar. Mayús: correr. Q: rugido y E: escupitajo (si tienes esas mutaciones). Tab fija el objetivo y C centra la cámara. Come pasando por encima de la comida y de la carne. Llena la barra de ADN, vence al Alfa y evoluciona.';
+  ? 'Arrastra en la mitad izquierda para moverte y en la derecha para la cámara. 🦷 morder, ⤴ saltar, y 💨 correr (mantenido). 📢 rugido y 💦 escupitajo aparecen cuando tienes esas mutaciones. Come pasando por encima de la comida y de la carne. Llena la barra de ADN, vence al Alfa y evoluciona.'
+  : 'WASD para moverte y ratón para la cámara. Clic: morder. Espacio: saltar. Mayús: correr. Q: rugido y E: escupitajo (si tienes esas mutaciones). Come pasando por encima de la comida y de la carne. Llena la barra de ADN, vence al Alfa y evoluciona.';
 
 function bienvenida() {
   jugando(false);
@@ -648,8 +643,6 @@ iniciarBucle(
     c.correr = entrada.activo('correr');
     c.rugido = entrada.pulsado('rugido');
     c.escupir = entrada.pulsado('escupir');
-    c.fijar = entrada.pulsado('fijar');
-    if (entrada.pulsado('centrar')) p.camYaw = p.jugador.yaw;
     p.autoFijar = app.g.config.objetivoAuto;
     p.actualizar(dt, c);
   }),

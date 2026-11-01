@@ -80,7 +80,7 @@ export function panelConfiguracion(opciones: { enJuego?: boolean; alReiniciar: (
       '🎯 Juego',
       opcion('Dificultad', segmentado('dificultad', DIFICULTADES.map((d) => [d, MODOS[d].nombre]), 'Dificultad'), 'El cambio se aplica en la siguiente etapa.'),
       opcion('Sensibilidad de la cámara', deslizador('sensibilidad', 'Sensibilidad de la cámara', '', '1', '1', '10')),
-      opcion('Fijar objetivo solo', siNo('objetivoAuto', 'Fijar objetivo solo'), 'La cámara sigue al animal más cercano y el mordisco va hacia él (recomendado en el móvil). También puedes fijarlo con Tab o con L.'),
+      opcion('Fijar objetivo solo', siNo('objetivoAuto', 'Fijar objetivo solo'), 'La cámara sigue al animal más cercano y el mordisco va hacia él (recomendado en el móvil).'),
       opcion('Vibración', siNo('vibracion', 'Vibración'), 'En el móvil, vibra al recibir mordiscos y al evolucionar.'),
     ),
     seccion('🔊 Sonido', opcion('Volumen', deslizador('volumenGeneral', 'Volumen general')), opcion('Efectos', deslizador('volumenEfectos', 'Volumen de los efectos'))),

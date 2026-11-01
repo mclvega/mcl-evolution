@@ -161,7 +161,7 @@ input[type='text'] { font: inherit; padding: 12px; border-radius: 10px; border: 
 body.tactil .botones-tactiles { max-width: 46%; align-items: flex-end; }
 .boton-tactil[aria-label='morder'] { width: 86px; height: 86px; font-size: 34px; background: rgb(255 200 61 / 0.25); }
 .boton-tactil[aria-label='saltar'], .boton-tactil[aria-label='correr'] { width: 70px; height: 70px; font-size: 26px; }
-.boton-tactil[aria-label='fijar'], .boton-tactil[aria-label='centrar'], .boton-tactil[aria-label='rugido'], .boton-tactil[aria-label='escupir'] { width: 54px; height: 54px; font-size: 20px; }
+.boton-tactil[aria-label='rugido'], .boton-tactil[aria-label='escupir'] { width: 54px; height: 54px; font-size: 20px; }
 .boton-tactil[aria-label='pausa'], .boton-tactil.oculto { display: none; }
 
 /* Horizontal por defecto: en el móvil en vertical, aviso para girarlo mientras se juega. */
