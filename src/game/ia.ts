@@ -152,6 +152,7 @@ export function actualizarFauna(p: Partida, f: Fauna, dt: number) {
         if (vivo && d < r + jc.radio && jc.y < 0.6) p.danarJugador(f.dano * 1.2, f.cuerpo.x, f.cuerpo.z);
       } else if (vivo && Math.abs(jc.y - f.cuerpo.y) < f.cuerpo.alto + 0.2 && enArco(f.cuerpo.x, f.cuerpo.z, f.yaw, jc.x, jc.z, jc.radio, alcance(f) + 0.3, 1.5)) {
         p.danarJugador(f.dano, f.cuerpo.x, f.cuerpo.z);
+        if (f.rasgo === 'venenoso') p.envenenarJugador(f.dano * 0.4);
       }
       f.estado = 'recuperar';
       f.t = 0;

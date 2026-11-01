@@ -2,11 +2,11 @@ import { describe, expect, it } from 'vitest';
 import { BIOMAS, biomaDe } from '../src/core/biomas';
 import { enArco, yawHacia } from '../src/core/combate';
 import { DIFICULTADES, escalaEtapa, MODOS } from '../src/core/difficulty';
-import { formaDeRol, poblacion, ROLES } from '../src/core/especies';
+import { formaDeRol, poblacion, RASGOS, ROLES, sortearRasgo } from '../src/core/especies';
 import { FORMAS, formaDeEtapa, formaRelativa } from '../src/core/formas';
 import { PASO } from '../src/core/loop';
 import { aplicarMutacion, MUTACIONES, sortearMutaciones, statsJugador } from '../src/core/mutaciones';
-import { generarRegion, metaAdn } from '../src/core/region';
+import { generarRegion, metaAdn, TIPOS_COMIDA } from '../src/core/region';
 import { crearRng } from '../src/core/rng';
 import { ASPECTO_POR_DEFECTO, aspectoAleatorio, normalizarAspecto } from '../src/game/aspecto';
 import { controlesVacios, Partida, type Controles } from '../src/game/logica';
@@ -57,6 +57,41 @@ describe('formas y biomas', () => {
     expect(ROLES.depredador.escala).toBeGreaterThan(ROLES.rival.escala);
     const i = FORMAS.findIndex((f) => f.id === formaDeRol(5, 'depredador', rng));
     expect(i).toBeGreaterThan(4 - 1);
+  });
+});
+
+describe('variedad', () => {
+  it('hay formas distintas por papel desde la etapa 1', () => {
+    const rng = crearRng(9);
+    const presas = new Set(Array.from({ length: 60 }, () => formaDeRol(1, 'presa', rng)));
+    const depredadores = new Set(Array.from({ length: 60 }, () => formaDeRol(1, 'depredador', rng)));
+    expect(presas.size).toBeGreaterThan(1);
+    expect(depredadores.size).toBeGreaterThan(2);
+  });
+
+  it('los rasgos cambian al animal y la manada es solo de depredadores', () => {
+    expect(RASGOS.acorazado.vida).toBeGreaterThan(1);
+    expect(RASGOS.veloz.velocidad).toBeGreaterThan(1);
+    const rng = crearRng(4);
+    const dePresa = new Set(Array.from({ length: 300 }, () => sortearRasgo(20, 'presa', rng)));
+    expect(dePresa.has('manada')).toBe(false);
+    expect(dePresa.size).toBeGreaterThan(2);
+    expect(sortearRasgo(20, 'alfa', rng)).toBe('normal');
+  });
+
+  it('las regiones tienen comida variada', () => {
+    const tipos = new Set<string>();
+    for (let e = 1; e <= 7; e++) for (const c of generarRegion(e, 11).comida) tipos.add(c.tipo);
+    for (const t of TIPOS_COMIDA) expect(tipos.has(t)).toBe(true);
+  });
+
+  it('un mordisco venenoso envenena al jugador', () => {
+    const p = nueva(3);
+    const vida = p.jugador.vida;
+    p.envenenarJugador(10);
+    simular(p, 1);
+    expect(p.jugador.veneno).toBeGreaterThan(0);
+    expect(p.jugador.vida).toBeLessThan(vida);
   });
 });
 
@@ -117,7 +152,7 @@ describe('partida', () => {
   it('empieza con fauna, comida y la forma de la etapa', () => {
     const p = nueva(4);
     expect(p.forma.id).toBe('lagarto');
-    expect(p.fauna.length).toBe(Object.values(poblacion(4)).reduce((a, b) => a + b, 0));
+    expect(p.fauna.length).toBeGreaterThanOrEqual(Object.values(poblacion(4)).reduce((a, b) => a + b, 0));
     expect(p.comida.length).toBeGreaterThan(20);
     expect(p.jugador.vida).toBe(p.stats.vidaMax);
   });

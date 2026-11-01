@@ -3,6 +3,7 @@ import './styles.css';
 import { app } from './app';
 import { audio } from './audio';
 import { MODOS } from './core/difficulty';
+import { RASGOS, type Rol } from './core/especies';
 import { formaDeEtapa } from './core/formas';
 import { Entrada } from './core/input';
 import { iniciarBucle } from './core/loop';
@@ -400,6 +401,20 @@ document.addEventListener('visibilitychange', () => document.hidden && pausar())
 
 /* ---------- HUD ---------- */
 
+const ICONO_ROL: Record<Rol, string> = { presa: '🍖', rival: '⚔️', depredador: '⚠️', alfa: '👑' };
+
+/** Márgenes del área segura (muesca del móvil): un elemento oculto con padding env(safe-area-inset-*). */
+const seguro = { izq: 0, arriba: 0 };
+const sonda = h('div', { style: 'position:fixed;visibility:hidden;pointer-events:none;padding-left:env(safe-area-inset-left);padding-top:env(safe-area-inset-top)' });
+document.body.append(sonda);
+function medirSeguro() {
+  const css = getComputedStyle(sonda);
+  seguro.izq = parseFloat(css.paddingLeft) || 0;
+  seguro.arriba = parseFloat(css.paddingTop) || 0;
+}
+medirSeguro();
+addEventListener('resize', medirSeguro);
+
 const sombra = (texto: string, x: number, y: number, color = '#fff') => {
   ctx.fillStyle = '#000a';
   ctx.fillText(texto, x + 1.5, y + 1.5);
@@ -507,19 +522,22 @@ function dibujarHud(p: Partida, dt: number) {
         continue;
       }
       if (f.rol === 'alfa') continue;
-      const herido = f.vida < f.vidaMax - 0.5;
-      const caza = f.estado === 'perseguir';
-      if (herido || caza || f === p.fijado) {
-        const w = 40 * Math.min(1.6, Math.max(0.8, f.escala));
-        barra(pt.x - w / 2, pt.y, w, 5, f.vida / f.vidaMax, f.rol === 'presa' ? '#7aff5a' : f.rol === 'depredador' ? '#ff5a3a' : '#ffd23f');
+      // Vida siempre visible sobre cada animal cercano, con el icono de su papel o de su rasgo.
+      if (p.distancia(f) < 30) {
+        const w = 44 * Math.min(1.6, Math.max(0.8, f.escala));
+        const color = f.rol === 'presa' ? '#7aff5a' : f.rol === 'depredador' ? '#ff5a3a' : '#ffd23f';
+        ctx.fillStyle = '#000c';
+        ctx.fillRect(pt.x - w / 2 - 1, pt.y - 1, w + 2, 8);
+        barra(pt.x - w / 2, pt.y, w, 6, f.vida / f.vidaMax, color, '#333c');
+        const icono = RASGOS[f.rasgo].icono || ICONO_ROL[f.rol];
+        ctx.textAlign = 'right';
+        ctx.font = '12px system-ui, sans-serif';
+        sombra(icono, pt.x - w / 2 - 3, pt.y + 3);
       }
       ctx.textAlign = 'center';
       if (amenaza) {
         ctx.font = 'bold 18px system-ui, sans-serif';
         sombra('!', pt.x, pt.y - 12, f.ataque === 'mordisco' ? '#ffd23f' : '#ff3030');
-      } else if (f.rol === 'depredador' && caza) {
-        ctx.font = '13px system-ui, sans-serif';
-        sombra('⚠', pt.x, pt.y - 10, '#ff8a3a');
       }
     }
     ctx.textAlign = 'center';
@@ -553,23 +571,28 @@ function dibujarHud(p: Partida, dt: number) {
     }
   }
 
-  // Vida, aguante y ADN (arriba a la izquierda).
-  const bx = 14;
-  const by = 14;
-  const bw = tactil ? Math.min(190, ancho * 0.22) : Math.min(260, ancho * 0.34);
-  barra(bx, by, bw, 18, j.vida / s.vidaMax, j.vida > s.vidaMax * 0.3 ? '#5ad13c' : '#ff5a5a');
-  ctx.font = 'bold 12px system-ui, sans-serif';
+  // Panel de vida, evolución (ADN) y aguante, arriba a la izquierda y dentro del área segura del móvil.
+  const bx = 12 + seguro.izq;
+  const by = 10 + seguro.arriba;
+  const bw = Math.min(tactil ? 240 : 280, ancho * 0.3);
+  ctx.fillStyle = 'rgba(0,0,0,0.55)';
+  ctx.fillRect(bx - 6, by - 6, bw + 12, 66);
+  ctx.strokeStyle = '#ffffff40';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(bx - 6, by - 6, bw + 12, 66);
   ctx.textAlign = 'left';
-  sombra(`❤️ ${Math.ceil(j.vida)}/${s.vidaMax}`, bx + 6, by + 9);
-  barra(bx, by + 20, bw * 0.7, 6, j.aguante / s.aguanteMax, j.agotado ? '#ff8a3a' : '#ffd23f');
+  barra(bx, by, bw, 20, j.vida / s.vidaMax, j.veneno > 0 ? '#9ad13c' : j.vida > s.vidaMax * 0.3 ? '#5ad13c' : '#ff5a5a', '#401818');
+  ctx.font = 'bold 13px system-ui, sans-serif';
+  sombra(`❤️ Vida ${Math.ceil(j.vida)}/${s.vidaMax}${j.veneno > 0 ? ' 🧪' : ''}`, bx + 6, by + 10);
   const lleno = p.adn >= p.meta;
-  barra(bx, by + 30, bw, 14, p.adn / p.meta, lleno ? '#4ad1ff' : '#8a6aff');
-  ctx.font = 'bold 11px system-ui, sans-serif';
-  sombra(lleno ? '🧬 ¡ADN completo! Vence al Alfa' : `🧬 ${Math.floor(p.adn)}/${p.meta}`, bx + 6, by + 37);
+  const parpadeo = lleno && p.tiempo % 0.8 < 0.4;
+  barra(bx, by + 24, bw, 18, p.adn / p.meta, parpadeo ? '#b0f0ff' : lleno ? '#4ad1ff' : '#a07aff', '#241a40');
+  sombra(lleno ? '🧬 ¡Evolución lista! Vence al Alfa' : `🧬 Evolución ${Math.floor((p.adn / p.meta) * 100)} %  ·  ADN ${Math.floor(p.adn)}/${p.meta}`, bx + 6, by + 33);
+  barra(bx, by + 46, bw, 8, j.aguante / s.aguanteMax, j.agotado ? '#ff8a3a' : '#ffd23f', '#3a3010');
 
   // Mutaciones activas.
   let rx = bx + 18;
-  const ry = by + 70;
+  const ry = by + 84;
   if (s.rugido) {
     recarga(rx, ry, '📢', j.recargaRugido, s.rugido, tactil ? '' : 'Q');
     rx += 42;

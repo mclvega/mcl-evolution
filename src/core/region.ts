@@ -1,8 +1,9 @@
-import { biomaDe, type Bioma } from './biomas';
+import { biomaDe, type Bioma, type IdBioma } from './biomas';
 import { bloque, type Bloque } from './fisica';
 import { crearRng } from './rng';
 
-export type TipoComida = 'planta' | 'fruto' | 'seta';
+export type TipoComida = 'planta' | 'fruto' | 'seta' | 'baya' | 'flor' | 'huevo';
+export const TIPOS_COMIDA: readonly TipoComida[] = ['planta', 'fruto', 'seta', 'baya', 'flor', 'huevo'];
 
 export interface SitioComida {
   x: number;
@@ -10,13 +11,15 @@ export interface SitioComida {
   tipo: TipoComida;
 }
 
+export type TipoAdorno = 'arbusto' | 'hierba' | 'piedra' | 'helecho' | 'flor' | 'cana' | 'cactus' | 'setaGigante' | 'cristal';
+
 export interface Adorno {
   x: number;
   z: number;
   escala: number;
   /** Ángulo para que no todos miren igual. */
   giro: number;
-  tipo: 'arbusto' | 'hierba' | 'piedra';
+  tipo: TipoAdorno;
 }
 
 export interface Charco {
@@ -45,8 +48,42 @@ export const COMIDA: Record<TipoComida | 'carne', { adn: number; cura: number }>
   planta: { adn: 2, cura: 3 },
   fruto: { adn: 4, cura: 8 },
   seta: { adn: 3, cura: 4 },
+  baya: { adn: 3, cura: 5 },
+  flor: { adn: 2, cura: 2 },
+  huevo: { adn: 8, cura: 6 },
   carne: { adn: 0, cura: 15 },
 };
+
+/** Reparto de la comida en cada bioma (pesos relativos). */
+const PESOS_COMIDA: Record<IdBioma, Partial<Record<TipoComida, number>>> = {
+  charca: { planta: 5, flor: 2, baya: 1, fruto: 1, seta: 1, huevo: 0.5 },
+  bosque: { planta: 3, baya: 3, seta: 2, fruto: 2, huevo: 0.5 },
+  pradera: { planta: 3, flor: 4, fruto: 1, baya: 1, huevo: 0.4 },
+  sabana: { planta: 3, fruto: 2, baya: 1, huevo: 1.2 },
+  tundra: { planta: 3, baya: 3, seta: 1, huevo: 0.6 },
+  volcan: { planta: 3, seta: 3, fruto: 1, huevo: 0.8 },
+  pantano: { planta: 3, seta: 4, flor: 1, baya: 1, huevo: 0.5 },
+};
+
+/** Decoración propia de cada bioma, además de hierba, arbustos y piedras. */
+const ADORNOS_BIOMA: Record<IdBioma, TipoAdorno[]> = {
+  charca: ['cana', 'flor', 'hierba'],
+  bosque: ['helecho', 'helecho', 'arbusto'],
+  pradera: ['flor', 'flor', 'hierba'],
+  sabana: ['cactus', 'hierba'],
+  tundra: ['cristal', 'piedra'],
+  volcan: ['cristal', 'piedra'],
+  pantano: ['setaGigante', 'cana', 'helecho'],
+};
+
+function sortearPeso<T extends string>(pesos: Partial<Record<T, number>>, azar: number): T {
+  const lista = Object.entries(pesos) as Array<[T, number]>;
+  let total = 0;
+  for (const [, w] of lista) total += w;
+  let x = azar * total;
+  for (const [k, w] of lista) if ((x -= w) <= 0) return k;
+  return lista[0][0];
+}
 
 /** Cuánto tarda en volver a crecer la comida vegetal, en segundos. */
 export const REBROTE = 25;
@@ -110,19 +147,19 @@ export function generarRegion(etapa: number, semilla: number): Region {
   }
 
   const adornos: Adorno[] = [];
-  for (let i = 0; i < 110; i++) {
+  for (let i = 0; i < 150; i++) {
     const s = sitio(0.3);
     if (!s) continue;
     const t = rng.siguiente();
-    adornos.push({ ...s, escala: rng.rango(0.6, 1.4), giro: rng.rango(0, Math.PI * 2), tipo: t < 0.45 ? 'hierba' : t < 0.8 ? 'arbusto' : 'piedra' });
+    const tipo: TipoAdorno = t < 0.45 ? rng.elegir(ADORNOS_BIOMA[bioma.id]) : t < 0.65 ? 'hierba' : t < 0.85 ? 'arbusto' : 'piedra';
+    adornos.push({ ...s, escala: rng.rango(0.6, 1.4), giro: rng.rango(0, Math.PI * 2), tipo });
   }
 
   const comida: SitioComida[] = [];
-  for (let i = 0; i < 46; i++) {
+  for (let i = 0; i < 54; i++) {
     const s = sitio(0.6, 3);
     if (!s) continue;
-    const t = rng.siguiente();
-    comida.push({ ...s, tipo: t < 0.6 ? 'planta' : t < 0.85 ? 'fruto' : 'seta' });
+    comida.push({ ...s, tipo: sortearPeso(PESOS_COMIDA[bioma.id], rng.siguiente()) });
     ocupados.push({ x: s.x, z: s.z, r: 0.6 });
   }
 

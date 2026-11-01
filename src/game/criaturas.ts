@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
-import type { Rol } from '../core/especies';
+import type { Rasgo, Rol } from '../core/especies';
 import type { IdForma } from '../core/formas';
 import type { Aspecto } from './aspecto';
 
@@ -61,18 +61,22 @@ export function fusionar(g: THREE.Object3D) {
 
 const mezclar = (a: number, b: number, k: number) => new THREE.Color(a).lerp(new THREE.Color(b), k).getHex();
 
-/** Apariencia de un animal de la fauna, a partir del color de su bioma. */
-export function aspectoFauna(color: number, rol: Rol, id: number): Aspecto {
-  const patrones = ['liso', 'manchas', 'rayas', 'escamas'] as const;
+/** Apariencia de un animal de la fauna: color del bioma con un tono propio y rasgos sorteados con su id. */
+export function aspectoFauna(color: number, rol: Rol, id: number, rasgo: Rasgo = 'normal'): Aspecto {
+  let semilla = Math.imul(id + 1, 2654435761) >>> 0;
+  const azar = () => ((semilla = (Math.imul(semilla, 1103515245) + 12345) >>> 0) / 4294967296);
+  const uno = <T>(lista: readonly T[]): T => lista[Math.floor(azar() * lista.length)];
+  const piel = mezclar(color, azar() < 0.5 ? 0xffffff : 0x000000, azar() * 0.3);
+  const alfa = rol === 'alfa';
   return {
-    piel: color,
-    vientre: mezclar(color, 0xffffff, 0.45),
-    patron: rol === 'alfa' ? 'escamas' : patrones[id % 4],
-    colorPatron: mezclar(color, 0x000000, 0.4),
-    ojos: rol === 'presa' ? 'grandes' : 'normales',
-    colorOjos: rol === 'alfa' ? 0xff2a2a : rol === 'depredador' ? 0xff8a1a : rol === 'rival' ? 0xffd23f : 0x222222,
-    cuernos: rol === 'alfa' ? 'largos' : rol === 'depredador' ? 'cortos' : 'ninguno',
-    cola: rol === 'alfa' ? 'mazo' : 'larga',
+    piel,
+    vientre: mezclar(piel, 0xffffff, 0.3 + azar() * 0.3),
+    patron: alfa || rasgo === 'acorazado' ? 'escamas' : uno(['liso', 'manchas', 'rayas', 'escamas'] as const),
+    colorPatron: rasgo === 'venenoso' ? 0x9ad13c : mezclar(piel, azar() < 0.7 ? 0x000000 : 0xffffff, 0.4),
+    ojos: rol === 'presa' ? uno(['normales', 'grandes'] as const) : uno(['pequenos', 'normales', 'grandes'] as const),
+    colorOjos: alfa ? 0xff2a2a : rasgo === 'venenoso' ? 0x7aff5a : rol === 'depredador' ? 0xff8a1a : rol === 'rival' ? 0xffd23f : 0x222222,
+    cuernos: alfa ? 'largos' : rol === 'presa' ? uno(['ninguno', 'ninguno', 'cortos'] as const) : uno(['ninguno', 'cortos', 'largos', 'curvos'] as const),
+    cola: alfa ? 'mazo' : uno(['corta', 'larga', 'larga', 'mazo'] as const),
   };
 }
 

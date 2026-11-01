@@ -1,6 +1,6 @@
 import { angulo, enArco, yawHacia } from '../core/combate';
 import { escalaEtapa, type Modo } from '../core/difficulty';
-import { formaDeRol, poblacion, ROLES, type DefRol, type Rol } from '../core/especies';
+import { formaDeRol, poblacion, RASGOS, ROLES, sortearRasgo, type DefRol, type Rasgo, type Rol } from '../core/especies';
 import { moverCuerpo, Rejilla, type Cuerpo } from '../core/fisica';
 import { formaDeEtapa, formaPorId, type Forma, type IdForma } from '../core/formas';
 import { aplicarMutacion, sortearMutaciones, statsJugador, type IdMutacion, type Mutaciones, type StatsJugador } from '../core/mutaciones';
@@ -55,6 +55,9 @@ export interface Jugador {
   corriendo: boolean;
   /** Crece un poco al llenar la barra de ADN (1 a 1,25). */
   crecimiento: number;
+  /** Veneno de los animales venenosos: segundos que quedan y daño por segundo. */
+  veneno: number;
+  dpsVeneno: number;
 }
 
 export type EstadoFauna = 'deambular' | 'huir' | 'perseguir' | 'aviso' | 'carga' | 'recuperar' | 'aturdido' | 'muerto';
@@ -63,10 +66,13 @@ export type AtaqueFauna = 'mordisco' | 'carga' | 'pisoton';
 export interface Fauna {
   id: number;
   rol: Rol;
+  rasgo: Rasgo;
   forma: IdForma;
   /** Color de piel (de la paleta del bioma). */
   color: number;
   d: DefRol;
+  /** ADN de su carne. */
+  adn: number;
   escala: number;
   cuerpo: Cuerpo;
   anterior: Punto;
@@ -241,7 +247,7 @@ export class Partida {
       cuerpo: { x: 0, y: 0, z: 0, vy: 0, radio: this.forma.radio, alto: this.forma.alto, enSuelo: true },
       anterior: { x: 0, y: 0, z: 0 },
       yaw: 0, vida: this.stats.vidaMax, aguante: this.stats.aguanteMax, agotado: false, estado: 'libre', t: 0, mordido: false,
-      recargaMordisco: 0, recargaRugido: 0, recargaEscupir: 0, invulnerable: 0, moviendose: false, corriendo: false, crecimiento: 1,
+      recargaMordisco: 0, recargaRugido: 0, recargaEscupir: 0, invulnerable: 0, moviendose: false, corriendo: false, crecimiento: 1, veneno: 0, dpsVeneno: 0,
     };
     for (const c of this.region.comida) {
       this.comida.push({ id: this.sigId++, x: c.x, z: c.z, tipo: c.tipo, adn: COMIDA[c.tipo].adn * this.escala.meta, activa: true, t: 0, escala: 1 });
@@ -292,16 +298,21 @@ export class Partida {
   }
 
   /** Crea un animal del papel dado, lejos del jugador. */
-  aparecer(rol: Rol, minDist = 28): Fauna {
+  /** Crea un animal del papel dado, lejos del jugador. Los depredadores de manada llegan en grupo. */
+  aparecer(rol: Rol, minDist = 28, grupo?: { x: number; z: number; forma: IdForma }): Fauna {
     const d = ROLES[rol];
-    const formaId = formaDeRol(this.etapa, rol, this.rng);
+    const rasgo: Rasgo = grupo ? 'manada' : sortearRasgo(this.etapa, rol, this.rng);
+    const ra = RASGOS[rasgo];
+    const formaId = grupo?.forma ?? formaDeRol(this.etapa, rol, this.rng);
     const forma = formaPorId(formaId);
-    const escala = d.escala * this.rng.rango(0.9, 1.1);
-    const p = this.puntoLibre(minDist, forma.radio * escala + 0.3);
-    const vidaMax = d.vida * this.escala.vida * (rol === 'alfa' ? this.modo.alfa : this.modo.vida);
+    const escala = d.escala * ra.escala * this.rng.rango(0.88, 1.12);
+    const p = grupo ? { x: grupo.x + this.rng.rango(-2.5, 2.5), z: grupo.z + this.rng.rango(-2.5, 2.5) } : this.puntoLibre(minDist, forma.radio * escala + 0.3);
+    const vidaMax = d.vida * ra.vida * this.escala.vida * (rol === 'alfa' ? this.modo.alfa : this.modo.vida);
     const f: Fauna = {
       id: this.sigId++,
       rol,
+      rasgo,
+      adn: d.adn * ra.adn,
       forma: formaId,
       color: rol === 'alfa' ? 0x3a2a2a : this.rng.elegir(this.region.bioma.fauna),
       d,
@@ -311,8 +322,8 @@ export class Partida {
       yaw: this.rng.rango(-Math.PI, Math.PI),
       vida: vidaMax,
       vidaMax,
-      dano: d.dano * this.escala.dano * this.modo.dano,
-      velocidad: d.velocidad * forma.velocidad ** 0.5,
+      dano: d.dano * ra.dano * this.escala.dano * this.modo.dano,
+      velocidad: d.velocidad * ra.velocidad * forma.velocidad ** 0.5,
       deteccion: rol === 'depredador' ? d.deteccion * this.modo.deteccion : d.deteccion,
       estado: rol === 'alfa' ? 'perseguir' : 'deambular',
       t: 0,
@@ -328,6 +339,7 @@ export class Partida {
       fase2: false,
     };
     this.fauna.push(f);
+    if (rasgo === 'manada' && !grupo) for (let i = this.rng.entero(1, 2); i > 0; i--) this.aparecer(rol, minDist, { x: p.x, z: p.z, forma: formaId });
     return f;
   }
 
@@ -343,6 +355,14 @@ export class Partida {
   }
 
   /* ---------- Daño ---------- */
+
+  /** Mordisco venenoso: daño durante 3 s (no se acumula, se renueva). */
+  envenenarJugador(dps: number) {
+    const j = this.jugador;
+    if (j.estado === 'muerto') return;
+    j.dpsVeneno = j.veneno > 0 ? Math.max(j.dpsVeneno, dps) : dps;
+    j.veneno = 3;
+  }
 
   danarJugador(dano: number, x: number, z: number) {
     const j = this.jugador;
@@ -397,7 +417,7 @@ export class Partida {
     }
     this.presas++;
     // Deja carne: el ADN se gana al comerla.
-    this.comida.push({ id: this.sigId++, x: f.cuerpo.x, z: f.cuerpo.z, tipo: 'carne', adn: f.d.adn * this.escala.meta, activa: true, t: DESPAWN_CARNE, escala: Math.min(1.6, 0.6 + f.escala * 0.4) });
+    this.comida.push({ id: this.sigId++, x: f.cuerpo.x, z: f.cuerpo.z, tipo: 'carne', adn: f.adn * this.escala.meta, activa: true, t: DESPAWN_CARNE, escala: Math.min(1.6, 0.6 + f.escala * 0.4) });
   }
 
   /* ---------- Bucle ---------- */
@@ -456,6 +476,17 @@ export class Partida {
       return;
     }
     j.vida = Math.min(s.vidaMax, j.vida + s.regeneracion * dt);
+    if (j.veneno > 0) {
+      j.veneno -= dt;
+      j.vida -= j.dpsVeneno * s.armadura * dt;
+      if (j.vida <= 0) {
+        j.vida = 0;
+        j.estado = 'muerto';
+        j.t = 0;
+        this.fijado = null;
+        return;
+      }
+    }
     j.crecimiento = 1 + 0.25 * Math.min(1, this.adn / this.meta);
     j.cuerpo.radio = this.forma.radio * j.crecimiento;
     j.cuerpo.alto = this.forma.alto * j.crecimiento;

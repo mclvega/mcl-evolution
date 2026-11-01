@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
+import { TIPOS_COMIDA, type TipoComida } from '../core/region';
 import { liberar } from '../rendimiento';
 import type { Aspecto } from './aspecto';
 import { animarCriatura, aspectoFauna, crearCriatura, malla, mat, type ModeloCriatura } from './criaturas';
@@ -42,16 +43,27 @@ function extras(c: ModeloCriatura, alfa: boolean): Omit<Modelo, 'criatura' | 'es
   return { contenedor, anillo, estrellas };
 }
 
-/** Geometría fusionada de varias piezas (para las instancias de la comida). */
-function unir(...piezas: THREE.Mesh[]): THREE.BufferGeometry {
-  const geos = piezas.map((m) => {
-    m.updateMatrix();
-    const g = m.geometry.index ? m.geometry.toNonIndexed() : m.geometry.clone();
-    m.geometry.dispose();
-    return g.applyMatrix4(m.matrix);
+/** Una pieza de un modelo de comida con su color. */
+type Pieza = [THREE.BufferGeometry, number, number, number, number];
+
+/** Geometría fusionada con colores por vértice: una sola instancia dibuja una comida de varios colores. */
+function unir(...piezas: Pieza[]): THREE.BufferGeometry {
+  const c = new THREE.Color();
+  const geos = piezas.map(([geo, color, x, y, z]) => {
+    const g = geo.index ? geo.toNonIndexed() : geo;
+    if (g !== geo) geo.dispose();
+    g.translate(x, y, z);
+    c.setHex(color);
+    const n = g.getAttribute('position').count;
+    const colores = new Float32Array(n * 3);
+    for (let i = 0; i < n; i++) colores.set([c.r, c.g, c.b], i * 3);
+    g.setAttribute('color', new THREE.BufferAttribute(colores, 3));
+    return g;
   });
   return mergeGeometries(geos);
 }
+
+const matVertices = new THREE.MeshLambertMaterial({ vertexColors: true });
 
 export class Render3D {
   readonly renderer: THREE.WebGLRenderer;
@@ -63,7 +75,7 @@ export class Render3D {
   private jugador: Modelo | null = null;
   private claveJugador = '';
   private fauna = new Map<Fauna, Modelo>();
-  private vegetal: Record<'planta' | 'fruto' | 'seta', THREE.InstancedMesh> | null = null;
+  private vegetal: Record<TipoComida, THREE.InstancedMesh> | null = null;
   private carne: THREE.InstancedMesh | null = null;
   private proyectiles: THREE.Mesh[] = [];
   private efectos = new Map<Efecto, THREE.Object3D>();
@@ -176,46 +188,119 @@ export class Render3D {
         fijo(m);
         continue;
       }
-      // Árbol: tronco y copa según la vegetación del bioma.
+      // Árbol: tronco y copa según la vegetación del bioma; `estilo` elige entre varios modelos.
       const tronco = mat(b.tronco);
       const hoja = mat(b.hoja);
+      const v = bl.estilo % 3;
       switch (b.vegetacion) {
-        case 'pino':
+        case 'pino': {
+          const pisos = v === 1 ? 2 : 3;
+          const ancho = v === 2 ? 1.25 : 1;
           fijo(malla(new THREE.CylinderGeometry(0.2, 0.3, alto * 0.4, 6), tronco, bl.x, alto * 0.2, bl.z));
-          for (let k = 0; k < 3; k++) fijo(malla(new THREE.ConeGeometry(1.6 - k * 0.4, 1.8, 7), hoja, bl.x, alto * 0.4 + k * 1.1, bl.z), malla(new THREE.ConeGeometry(0.9 - k * 0.2, 0.5, 7), mat(0xf7fbff), bl.x, alto * 0.4 + k * 1.1 + 0.7, bl.z));
+          for (let k = 0; k < pisos; k++) fijo(malla(new THREE.ConeGeometry((1.6 - k * 0.4) * ancho, 1.8, 7), hoja, bl.x, alto * 0.4 + k * 1.1, bl.z), malla(new THREE.ConeGeometry((0.9 - k * 0.2) * ancho, 0.5, 7), mat(0xf7fbff), bl.x, alto * 0.4 + k * 1.1 + 0.7, bl.z));
           break;
+        }
         case 'acacia':
-          fijo(malla(new THREE.CylinderGeometry(0.15, 0.25, alto, 6), tronco, bl.x, alto / 2, bl.z), malla(new THREE.CylinderGeometry(2.6, 2.2, 0.6, 8), hoja, bl.x, alto + 0.2, bl.z));
+          if (v === 1) {
+            // Palmera: tronco inclinado y hojas en estrella.
+            const t = malla(new THREE.CylinderGeometry(0.14, 0.22, alto, 6), tronco, bl.x + 0.3, alto / 2, bl.z);
+            t.rotation.z = -0.12;
+            fijo(t);
+            for (let k = 0; k < 6; k++) {
+              const a = (k / 6) * Math.PI * 2;
+              const h = malla(new THREE.BoxGeometry(1.8, 0.06, 0.4), hoja, bl.x + 0.55 + Math.cos(a) * 0.8, alto - 0.1, bl.z + Math.sin(a) * 0.8);
+              h.rotation.set(0, -a, -0.35);
+              fijo(h);
+            }
+          } else fijo(malla(new THREE.CylinderGeometry(0.15, 0.25, alto, 6), tronco, bl.x, alto / 2, bl.z), malla(new THREE.CylinderGeometry(v === 2 ? 1.8 : 2.6, v === 2 ? 1.5 : 2.2, 0.6, 8), hoja, bl.x, alto + 0.2, bl.z));
           break;
         case 'junco':
         case 'manglar':
-          fijo(malla(new THREE.CylinderGeometry(0.18, 0.35, alto, 6), tronco, bl.x, alto / 2, bl.z), malla(new THREE.DodecahedronGeometry(1.5, 0), hoja, bl.x, alto + 0.3, bl.z));
-          for (const [dx, dz] of [[0.5, 0.3], [-0.4, 0.4], [0, -0.5]]) fijo(malla(new THREE.CylinderGeometry(0.05, 0.08, 1.2, 4), tronco, bl.x + dx, 0.5, bl.z + dz));
+          if (v === 1) {
+            // Sauce: copa colgante.
+            fijo(malla(new THREE.CylinderGeometry(0.2, 0.35, alto, 6), tronco, bl.x, alto / 2, bl.z), malla(new THREE.ConeGeometry(1.8, alto * 0.8, 8), hoja, bl.x, alto * 0.65, bl.z));
+          } else {
+            fijo(malla(new THREE.CylinderGeometry(0.18, 0.35, alto, 6), tronco, bl.x, alto / 2, bl.z), malla(new THREE.DodecahedronGeometry(1.5, 0), hoja, bl.x, alto + 0.3, bl.z));
+            for (const [dx, dz] of [[0.5, 0.3], [-0.4, 0.4], [0, -0.5]]) fijo(malla(new THREE.CylinderGeometry(0.05, 0.08, 1.2, 4), tronco, bl.x + dx, 0.5, bl.z + dz));
+          }
           break;
         case 'roca': {
-          const m = malla(new THREE.ConeGeometry(0.7, alto, 5), mat(0x1e1a1a), bl.x, alto / 2, bl.z);
-          fijo(m, malla(new THREE.OctahedronGeometry(0.3, 0), mat(0xff7a2a, true), bl.x, alto * 0.7, bl.z - 0.45, false));
+          const m = malla(new THREE.ConeGeometry(v === 1 ? 0.5 : 0.7, alto * (v === 2 ? 0.7 : 1), 5), mat(0x1e1a1a), bl.x, alto / 2, bl.z);
+          fijo(m, malla(new THREE.OctahedronGeometry(0.3, 0), mat(0xff7a2a, true), bl.x, alto * 0.6, bl.z - 0.45, false));
           break;
         }
         default:
           fijo(malla(new THREE.CylinderGeometry(0.22, 0.32, alto * 0.65, 6), tronco, bl.x, alto * 0.32, bl.z));
-          fijo(malla(new THREE.IcosahedronGeometry(1.5, 0), hoja, bl.x, alto * 0.75, bl.z), malla(new THREE.IcosahedronGeometry(1.1, 0), hoja, bl.x + 0.7, alto * 0.6, bl.z + 0.4));
-          if (b.vegetacion === 'flor') fijo(malla(new THREE.SphereGeometry(0.2, 6, 4), mat(b.fruto), bl.x + 0.9, alto * 0.8, bl.z - 0.6));
+          if (v === 1) {
+            // Árbol de copas apiladas.
+            fijo(malla(new THREE.SphereGeometry(1.3, 7, 5), hoja, bl.x, alto * 0.7, bl.z), malla(new THREE.SphereGeometry(0.9, 7, 5), hoja, bl.x, alto * 0.7 + 1.2, bl.z));
+          } else if (v === 2) {
+            fijo(malla(new THREE.ConeGeometry(1.4, alto * 0.9, 7), hoja, bl.x, alto * 0.75, bl.z));
+          } else fijo(malla(new THREE.IcosahedronGeometry(1.5, 0), hoja, bl.x, alto * 0.75, bl.z), malla(new THREE.IcosahedronGeometry(1.1, 0), hoja, bl.x + 0.7, alto * 0.6, bl.z + 0.4));
+          if (b.vegetacion === 'flor' || v === 0) fijo(malla(new THREE.SphereGeometry(0.2, 6, 4), mat(b.fruto), bl.x + 0.9, alto * 0.8, bl.z - 0.6));
       }
     }
+    // Nenúfares sobre los charcos (no en la lava).
+    if (b.id !== 'volcan') {
+      for (const c of r.charcos) {
+        for (let k = 0; k < 3; k++) {
+          const a = c.x + k * 2.1;
+          fijo(malla(new THREE.CircleGeometry(0.35, 7).rotateX(-Math.PI / 2), mat(0x4f9a3a), c.x + Math.cos(a) * c.r * 0.5, 0.05, c.z + Math.sin(a) * c.r * 0.5, false));
+        }
+      }
+    }
+    const COLORES_FLOR = [0xff6ab0, 0xffffff, 0xffd23f, 0xb06aff, 0xff7a3a];
     for (const d of r.adornos) {
       const e = d.escala;
-      if (d.tipo === 'hierba') {
-        for (let k = 0; k < 3; k++) fijo(malla(new THREE.ConeGeometry(0.06 * e, 0.45 * e, 3), mat(b.vegetacion === 'roca' ? 0x5a3a2a : b.hoja), d.x + Math.cos(d.giro + k * 2.1) * 0.12, 0.22 * e, d.z + Math.sin(d.giro + k * 2.1) * 0.12, false));
-      } else if (d.tipo === 'arbusto') {
-        const m = malla(new THREE.DodecahedronGeometry(0.5 * e, 0), mat(b.vegetacion === 'roca' ? 0x2a2220 : b.hoja), d.x, 0.3 * e, d.z);
-        m.scale.y = 0.7;
-        fijo(m);
-        if (b.vegetacion === 'flor') fijo(malla(new THREE.SphereGeometry(0.1, 5, 4), mat([0xff6ab0, 0xffffff, 0xffd23f][Math.floor(d.giro) % 3]), d.x, 0.62 * e, d.z, false));
-      } else {
-        const m = malla(new THREE.DodecahedronGeometry(0.25 * e, 0), mat(b.roca), d.x, 0.1 * e, d.z, false);
-        m.rotation.y = d.giro;
-        fijo(m);
+      const cx = (k: number, r2: number) => d.x + Math.cos(d.giro + k * 2.1) * r2;
+      const cz = (k: number, r2: number) => d.z + Math.sin(d.giro + k * 2.1) * r2;
+      switch (d.tipo) {
+        case 'hierba':
+          for (let k = 0; k < 3; k++) fijo(malla(new THREE.ConeGeometry(0.06 * e, 0.45 * e, 3), mat(b.vegetacion === 'roca' ? 0x5a3a2a : b.hoja), cx(k, 0.12), 0.22 * e, cz(k, 0.12), false));
+          break;
+        case 'arbusto': {
+          const m = malla(new THREE.DodecahedronGeometry(0.5 * e, 0), mat(b.vegetacion === 'roca' ? 0x2a2220 : b.hoja), d.x, 0.3 * e, d.z);
+          m.scale.y = 0.7;
+          fijo(m);
+          break;
+        }
+        case 'helecho':
+          for (let k = 0; k < 5; k++) {
+            const a = d.giro + k * 1.26;
+            const h = malla(new THREE.ConeGeometry(0.12 * e, 0.9 * e, 3), mat(0x3f8a3a), d.x + Math.cos(a) * 0.25 * e, 0.3 * e, d.z + Math.sin(a) * 0.25 * e, false);
+            h.rotation.set(Math.sin(a) * 0.7, 0, -Math.cos(a) * 0.7);
+            fijo(h);
+          }
+          break;
+        case 'flor': {
+          const color = COLORES_FLOR[Math.floor(d.giro * 3) % COLORES_FLOR.length];
+          for (let k = 0; k < 3; k++) fijo(malla(new THREE.CylinderGeometry(0.015, 0.015, 0.35 * e, 3), mat(0x4f9a3a), cx(k, 0.15), 0.17 * e, cz(k, 0.15), false), malla(new THREE.SphereGeometry(0.07 * e, 5, 3), mat(color), cx(k, 0.15), 0.36 * e, cz(k, 0.15), false));
+          break;
+        }
+        case 'cana':
+          for (let k = 0; k < 4; k++) fijo(malla(new THREE.CylinderGeometry(0.03, 0.04, 1.4 * e, 4), mat(0x8a9a4a), cx(k, 0.18), 0.7 * e, cz(k, 0.18), false), malla(new THREE.CylinderGeometry(0.06, 0.06, 0.25, 5), mat(0x6d4c2a), cx(k, 0.18), 1.35 * e, cz(k, 0.18), false));
+          break;
+        case 'cactus':
+          fijo(malla(new THREE.CylinderGeometry(0.22 * e, 0.25 * e, 1.6 * e, 7), mat(0x4f8a3a), d.x, 0.8 * e, d.z));
+          for (const sgn of [-1, 1]) fijo(malla(new THREE.CylinderGeometry(0.12 * e, 0.12 * e, 0.6 * e, 6), mat(0x4f8a3a), d.x + sgn * 0.35 * e, (0.9 + (sgn > 0 ? 0.2 : 0)) * e, d.z, false));
+          break;
+        case 'setaGigante':
+          fijo(malla(new THREE.CylinderGeometry(0.12 * e, 0.18 * e, 1.3 * e, 6), mat(0xe8dcc8), d.x, 0.65 * e, d.z), malla(new THREE.SphereGeometry(0.7 * e, 8, 4, 0, Math.PI * 2, 0, Math.PI / 2), mat([0xc0392b, 0x8e5ad0, 0xe08a2a][Math.floor(d.giro) % 3]), d.x, 1.25 * e, d.z));
+          break;
+        case 'cristal': {
+          const brillo = b.id === 'volcan' ? 0xff7a2a : 0x9fe8ff;
+          for (let k = 0; k < 3; k++) {
+            const c2 = malla(new THREE.OctahedronGeometry(0.18 * e * (1 + k * 0.3), 0), mat(brillo, true), cx(k, 0.15), 0.25 * e * (1 + k * 0.3), cz(k, 0.15), false);
+            c2.scale.y = 2;
+            fijo(c2);
+          }
+          break;
+        }
+        default: {
+          const m = malla(new THREE.DodecahedronGeometry(0.25 * e, 0), mat(b.roca), d.x, 0.1 * e, d.z, false);
+          m.rotation.y = d.giro;
+          fijo(m);
+        }
       }
     }
     for (const [material, geos] of porMaterial) {
@@ -227,34 +312,51 @@ export class Render3D {
     this.construirComida(p);
   }
 
-  /** Comida con instancias: una llamada de dibujo por tipo. */
+  /** Comida con instancias y colores por vértice: una llamada de dibujo por tipo. */
   private construirComida(p: Partida) {
     const b = p.region.bioma;
     if (this.vegetal) for (const m of Object.values(this.vegetal)) this.escena.remove(m);
     if (this.carne) this.escena.remove(this.carne);
-    const planta = unir(
-      malla(new THREE.ConeGeometry(0.12, 0.5, 4), mat(0), 0, 0.25, 0),
-      malla(new THREE.ConeGeometry(0.1, 0.4, 4), mat(0), 0.12, 0.2, 0.05),
-      malla(new THREE.ConeGeometry(0.1, 0.4, 4), mat(0), -0.1, 0.2, -0.06),
-      malla(new THREE.SphereGeometry(0.12, 6, 4), mat(0), 0, 0.5, 0),
-    );
-    const fruto = unir(malla(new THREE.SphereGeometry(0.2, 8, 6), mat(0), 0, 0.22, 0), malla(new THREE.ConeGeometry(0.04, 0.1, 4), mat(0), 0, 0.45, 0));
-    const seta = unir(malla(new THREE.CylinderGeometry(0.06, 0.08, 0.25, 6), mat(0), 0, 0.12, 0), malla(new THREE.SphereGeometry(0.2, 8, 5, 0, Math.PI * 2, 0, Math.PI / 2), mat(0), 0, 0.24, 0));
-    const crear = (geo: THREE.BufferGeometry, color: number, n: number) => {
-      const m = new THREE.InstancedMesh(geo, mat(color), n);
+    const hoja = 0x4f9a3a;
+    const anillo = (n: number, r: number, y: number, tam: number, color: number): Pieza[] =>
+      Array.from({ length: n }, (_, k): Pieza => [new THREE.SphereGeometry(tam, 5, 4), color, Math.cos((k / n) * Math.PI * 2) * r, y + (k % 2) * 0.06, Math.sin((k / n) * Math.PI * 2) * r]);
+    const modelos: Record<TipoComida, THREE.BufferGeometry> = {
+      planta: unir(
+        [new THREE.ConeGeometry(0.12, 0.5, 4), b.planta, 0, 0.25, 0],
+        [new THREE.ConeGeometry(0.1, 0.4, 4), b.planta, 0.12, 0.2, 0.05],
+        [new THREE.ConeGeometry(0.1, 0.4, 4), b.planta, -0.1, 0.2, -0.06],
+        [new THREE.SphereGeometry(0.12, 6, 4), 0xffffff, 0, 0.5, 0],
+      ),
+      fruto: unir([new THREE.SphereGeometry(0.2, 8, 6), b.fruto, 0, 0.22, 0], [new THREE.ConeGeometry(0.04, 0.1, 4), 0x6d4c2a, 0, 0.45, 0], [new THREE.ConeGeometry(0.06, 0.15, 3).rotateZ(1.2), hoja, 0.08, 0.44, 0]),
+      seta: unir(
+        [new THREE.CylinderGeometry(0.06, 0.08, 0.25, 6), 0xf2e8d0, 0, 0.12, 0],
+        [new THREE.SphereGeometry(0.2, 8, 5, 0, Math.PI * 2, 0, Math.PI / 2), 0xe0503a, 0, 0.24, 0],
+        [new THREE.SphereGeometry(0.04, 4, 3), 0xffffff, 0.08, 0.38, 0.05],
+        [new THREE.SphereGeometry(0.035, 4, 3), 0xffffff, -0.07, 0.36, -0.06],
+      ),
+      baya: unir([new THREE.DodecahedronGeometry(0.26, 0), hoja, 0, 0.22, 0], ...anillo(5, 0.2, 0.28, 0.06, 0x5a2a9a)),
+      flor: unir([new THREE.CylinderGeometry(0.02, 0.02, 0.45, 4), hoja, 0, 0.22, 0], ...anillo(5, 0.1, 0.45, 0.08, 0xff6ab0), [new THREE.SphereGeometry(0.06, 5, 3), 0xffd23f, 0, 0.5, 0]),
+      huevo: unir(
+        [new THREE.TorusGeometry(0.22, 0.07, 4, 10).rotateX(Math.PI / 2), 0x8a6a3a, 0, 0.06, 0],
+        [new THREE.SphereGeometry(0.11, 7, 5).scale(1, 1.3, 1), 0xf2e8d0, -0.06, 0.15, 0],
+        [new THREE.SphereGeometry(0.1, 7, 5).scale(1, 1.3, 1), 0xbfe0f0, 0.08, 0.14, 0.04],
+      ),
+    };
+    const crear = (geo: THREE.BufferGeometry, n: number): THREE.InstancedMesh => {
+      const m = new THREE.InstancedMesh(geo, matVertices, n);
       m.castShadow = true;
       m.count = 0;
       m.frustumCulled = false;
       this.escena.add(m);
       return m;
     };
-    this.vegetal = { planta: crear(planta, b.planta, MAX_VEGETAL), fruto: crear(fruto, b.fruto, MAX_VEGETAL), seta: crear(seta, 0xe0503a, MAX_VEGETAL) };
-    this.carne = crear(unir(malla(new THREE.DodecahedronGeometry(0.25, 0), mat(0), 0, 0.18, 0), malla(new THREE.CylinderGeometry(0.04, 0.04, 0.5, 4), mat(0), 0, 0.2, 0)).rotateZ(0.2), 0xc0392b, MAX_CARNE);
+    this.vegetal = Object.fromEntries(TIPOS_COMIDA.map((t) => [t, crear(modelos[t], MAX_VEGETAL)])) as Record<TipoComida, THREE.InstancedMesh>;
+    this.carne = crear(unir([new THREE.DodecahedronGeometry(0.25, 0), 0xc0392b, 0, 0.18, 0], [new THREE.CylinderGeometry(0.04, 0.04, 0.5, 4).rotateZ(0.2), 0xf2e8d0, 0, 0.2, 0]), MAX_CARNE);
   }
 
   private dibujarComida(p: Partida) {
     if (!this.vegetal || !this.carne) return;
-    const cuentas = { planta: 0, fruto: 0, seta: 0 };
+    const cuentas = Object.fromEntries(TIPOS_COMIDA.map((t) => [t, 0])) as Record<TipoComida, number>;
     let carnes = 0;
     for (const c of p.comida) {
       if (!c.activa) continue;
@@ -268,16 +370,16 @@ export class Render3D {
         this.carne.setMatrixAt(carnes++, this.m4);
         continue;
       }
-      const i = cuentas[c.tipo as keyof typeof cuentas];
+      const i = cuentas[c.tipo];
       if (i >= MAX_VEGETAL) continue;
       this.esc.setScalar(brillo);
       this.m4.compose(this.pos.set(c.x, 0, c.z), this.q, this.esc);
-      this.vegetal[c.tipo as keyof typeof cuentas].setMatrixAt(i, this.m4);
-      cuentas[c.tipo as keyof typeof cuentas]++;
+      this.vegetal[c.tipo].setMatrixAt(i, this.m4);
+      cuentas[c.tipo]++;
     }
-    for (const [tipo, n] of Object.entries(cuentas) as Array<[keyof typeof cuentas, number]>) {
-      this.vegetal[tipo].count = n;
-      this.vegetal[tipo].instanceMatrix.needsUpdate = true;
+    for (const t of TIPOS_COMIDA) {
+      this.vegetal[t].count = cuentas[t];
+      this.vegetal[t].instanceMatrix.needsUpdate = true;
     }
     this.carne.count = carnes;
     this.carne.instanceMatrix.needsUpdate = true;
@@ -286,7 +388,7 @@ export class Render3D {
   private modeloFauna(f: Fauna): Modelo {
     let m = this.fauna.get(f);
     if (m) return m;
-    const c = crearCriatura(f.forma, aspectoFauna(f.color, f.rol, f.id), f.rol === 'alfa' ? 1 : 0);
+    const c = crearCriatura(f.forma, aspectoFauna(f.color, f.rol, f.id, f.rasgo), f.rol === 'alfa' ? 1 : 0);
     m = { ...extras(c, f.rol === 'alfa'), criatura: c, escala: f.escala };
     m.contenedor.scale.setScalar(f.escala);
     this.fauna.set(f, m);
